@@ -260,93 +260,135 @@ function ARInstructions() {
   );
 }
 
-// CORREGIDO: Función mejorada para detectar soporte AR con múltiples métodos
+// CORREGIDO: Detección de soporte AR más precisa
 function checkARSupport() {
   return new Promise((resolve) => {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const isAndroid = /Android/.test(navigator.userAgent);
+    const isMobile = isIOS || isAndroid;
     
     console.log('Device Info:', { isMobile, isIOS, isAndroid });
     
-    if (!navigator.xr) {
-      console.log('WebXR not supported');
+    // En iOS, WebXR AR no está soportado en Safari
+    if (isIOS) {
+      console.log('iOS detected - WebXR AR not supported in Safari');
       resolve(false);
       return;
     }
 
-    // CORREGIDO: Solo usar valores válidos para XRSessionMode
-    const sessionTypes = ['immersive-ar'];
-    let checkedCount = 0;
-    let anySupported = false;
+    // Solo Android puede tener WebXR AR
+    if (!navigator.xr || !isAndroid) {
+      console.log('WebXR not supported or not Android');
+      resolve(false);
+      return;
+    }
 
-    const checkSessionType = (sessionType) => {
-      navigator.xr.isSessionSupported(sessionType)
-        .then((supported) => {
-          console.log(`${sessionType} Support:`, supported);
-          if (supported) anySupported = true;
-          
-          checkedCount++;
-          if (checkedCount >= sessionTypes.length) {
-            // Si no hay soporte AR real, pero es móvil con WebXR, intentar de todos modos
-            const finalSupport = anySupported || (isMobile && !!navigator.xr);
-            console.log('Final AR Support Decision:', finalSupport);
-            resolve(finalSupport);
-          }
-        })
-        .catch((error) => {
-          console.log(`${sessionType} Check Error:`, error);
-          checkedCount++;
-          if (checkedCount >= sessionTypes.length) {
-            // Fallback para móviles
-            const fallbackSupport = isMobile && !!navigator.xr;
-            console.log('Fallback AR Support:', fallbackSupport);
-            resolve(fallbackSupport);
-          }
-        });
-    };
-
-    // Verificar todos los tipos de sesión
-    sessionTypes.forEach(checkSessionType);
+    // Verificar soporte AR en Android
+    navigator.xr.isSessionSupported('immersive-ar')
+      .then((supported) => {
+        console.log('immersive-ar Support:', supported);
+        resolve(supported);
+      })
+      .catch((error) => {
+        console.log('AR Check Error:', error);
+        resolve(false);
+      });
   });
 }
 
-// Hook para manejar el Canvas AR
+// NUEVO: Función para AR Quick Look en iOS
+function createARQuickLook(modelPath, itemName) {
+  // Crear un enlace temporal para AR Quick Look
+  const link = document.createElement('a');
+  
+  // Convertir la ruta del modelo GLTF a USDZ si es necesario
+  // Nota: Necesitarías tener versiones USDZ de tus modelos para iOS
+  const usdzPath = modelPath.replace('.gltf', '.usdz').replace('.glb', '.usdz');
+  
+  link.href = usdzPath;
+  link.rel = 'ar';
+  link.setAttribute('data-ar-object', itemName);
+  link.style.display = 'none';
+  
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+// SIMPLIFICADO: Hook para Canvas AR solo en Android
 function useARCanvas() {
   const [canvasReady, setCanvasReady] = useState(false);
   
   useEffect(() => {
-    if (!navigator.xr) {
+    const isAndroid = /Android/.test(navigator.userAgent);
+    
+    if (!navigator.xr || !isAndroid) {
       setCanvasReady(false);
       return;
     }
     
-    let timeoutId;
-    let attempts = 0;
-    const maxAttempts = 8;
+    const timer = setTimeout(() => {
+      setCanvasReady(true);
+    }, 1000);
     
-    const checkCanvas = () => {
-      attempts++;
-      const isReady = window.THREE && navigator.xr && attempts >= 2;
-      
-      if (isReady || attempts >= maxAttempts) {
-        setCanvasReady(isReady);
-      } else {
-        timeoutId = setTimeout(checkCanvas, 300);
-      }
-    };
-    
-    timeoutId = setTimeout(checkCanvas, 500);
-    
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
+    return () => clearTimeout(timer);
   }, []);
   
   return canvasReady;
 }
 
-// NUEVO: Componente Modal de información AR
+// NUEVO: Modal de información iOS
+function IOSARModal({ isOpen, onClose, onUseQuickLook, itemName }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-60 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+        <div className="text-center mb-6">
+          <div className="text-6xl mb-4">📱</div>
+          <h3 className="text-xl font-playfair font-bold text-neutral-950 mb-2">
+            AR en iOS
+          </h3>
+          <p className="text-sm text-neutral-600">
+            Safari en iOS no soporta WebXR. Puedes usar AR Quick Look si tienes el modelo en formato USDZ.
+          </p>
+        </div>
+
+        <div className="space-y-3 mb-6 text-sm text-neutral-700">
+          <div className="flex items-start gap-3">
+            <span className="text-orange-500">⚠️</span>
+            <span>WebXR no disponible en Safari iOS</span>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="text-blue-500">ℹ️</span>
+            <span>AR Quick Look requiere archivos USDZ</span>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="text-green-500">✓</span>
+            <span>Funciona nativamente en iOS 12+</span>
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 border border-neutral-300 text-neutral-700 hover:bg-neutral-100 font-poppins px-4 py-2 rounded-md transition-colors duration-200"
+          >
+            Cerrar
+          </button>
+          <button
+            onClick={onUseQuickLook}
+            className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-poppins px-4 py-2 rounded-md transition-colors duration-200"
+          >
+            Probar Quick Look
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// NUEVO: Modal de información AR mejorado
 function ARInfoModal({ isOpen, onClose, onContinue }) {
   if (!isOpen) return null;
 
@@ -356,25 +398,25 @@ function ARInfoModal({ isOpen, onClose, onContinue }) {
         <div className="text-center mb-6">
           <div className="text-6xl mb-4">🥽</div>
           <h3 className="text-xl font-playfair font-bold text-neutral-950 mb-2">
-            Modo AR Experimental
+            Modo AR WebXR
           </h3>
           <p className="text-sm text-neutral-600">
-            Tu dispositivo puede no tener soporte AR completo, pero podemos intentarlo de todos modos.
+            Tu dispositivo Android soporta WebXR. Vamos a iniciar el modo AR.
           </p>
         </div>
 
         <div className="space-y-3 mb-6 text-sm text-neutral-700">
           <div className="flex items-start gap-3">
             <span className="text-green-500">✓</span>
-            <span>WebXR está disponible</span>
+            <span>WebXR disponible</span>
           </div>
           <div className="flex items-start gap-3">
-            <span className="text-orange-500">⚠️</span>
-            <span>AR inmersivo no detectado</span>
+            <span className="text-green-500">✓</span>
+            <span>AR inmersivo soportado</span>
           </div>
           <div className="flex items-start gap-3">
             <span className="text-blue-500">ℹ️</span>
-            <span>Necesitas permitir acceso a la cámara</span>
+            <span>Permitir acceso a la cámara</span>
           </div>
         </div>
 
@@ -389,7 +431,7 @@ function ARInfoModal({ isOpen, onClose, onContinue }) {
             onClick={onContinue}
             className="flex-1 bg-primary-500 hover:bg-primary-600 text-white font-poppins px-4 py-2 rounded-md transition-colors duration-200"
           >
-            Intentar AR
+            Iniciar AR
           </button>
         </div>
       </div>
@@ -404,10 +446,15 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [isARMode, setIsARMode] = useState(false);
   const [arSupported, setARSupported] = useState(false);
   const [checkingAR, setCheckingAR] = useState(true);
-  const [showARInfo, setShowARInfo] = useState(false); // NUEVO
+  const [showARInfo, setShowARInfo] = useState(false);
+  const [showIOSModal, setShowIOSModal] = useState(false);
   const canvasReady = useARCanvas();
 
-  // Verificar soporte AR mejorado
+  // Detectar iOS
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isAndroid = /Android/.test(navigator.userAgent);
+
+  // Verificar soporte AR
   useEffect(() => {
     let mounted = true;
     
@@ -447,32 +494,6 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     }
   }, [isOpen, modelPath]);
 
-  // Manejo del contexto perdido de WebGL
-  useEffect(() => {
-    const handleContextLost = (event) => {
-      console.warn('WebGL context lost, preventing default behavior');
-      event.preventDefault();
-      setError('Contexto 3D perdido. Refresca la página.');
-    };
-
-    const handleContextRestored = () => {
-      console.log('WebGL context restored');
-      setError(null);
-      setLoading(true);
-    };
-
-    const canvas = document.querySelector('canvas');
-    if (canvas) {
-      canvas.addEventListener('webglcontextlost', handleContextLost);
-      canvas.addEventListener('webglcontextrestored', handleContextRestored);
-      
-      return () => {
-        canvas.removeEventListener('webglcontextlost', handleContextLost);
-        canvas.removeEventListener('webglcontextrestored', handleContextRestored);
-      };
-    }
-  }, [isOpen]);
-
   const handleModelLoad = useCallback(() => {
     setLoading(false);
   }, []);
@@ -483,46 +504,43 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     setLoading(false);
   }, []);
 
-  // NUEVO: Mostrar modal de información antes de AR
+  // Manejo del botón AR
   const handleARButtonClick = () => {
-    if (!arSupported) {
-      alert('AR no está disponible en este dispositivo. Necesitas un navegador compatible con WebXR.');
-      return;
+    if (isIOS) {
+      setShowIOSModal(true);
+    } else if (arSupported) {
+      setShowARInfo(true);
+    } else {
+      alert('AR no está disponible en este dispositivo. Necesitas Chrome/Edge en Android con WebXR.');
     }
-    setShowARInfo(true);
   };
 
-  // CORREGIDO: Mejor manejo de entrada AR con intentos múltiples
+  // AR Quick Look para iOS
+  const handleQuickLook = () => {
+    setShowIOSModal(false);
+    try {
+      createARQuickLook(modelPath, itemName);
+    } catch (error) {
+      console.error('Error launching AR Quick Look:', error);
+      alert('No se pudo iniciar AR Quick Look. Asegúrate de que el modelo esté en formato USDZ.');
+    }
+  };
+
+  // WebXR para Android
   const handleEnterAR = async () => {
     setShowARInfo(false);
     
     try {
-      console.log('Iniciando proceso AR...');
+      console.log('Iniciando WebXR AR...');
       setLoading(true);
       
-      // Más tiempo de espera
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
       setIsARMode(true);
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 500));
       
-      if (!store || typeof store.enterAR !== 'function') {
-        throw new Error('AR Store no está inicializado correctamente');
-      }
-      
-      // NUEVO: Intentar con configuraciones diferentes
-      try {
-        await store.enterAR();
-        console.log('AR iniciado correctamente');
-      } catch (firstError) {
-        console.log('Primer intento AR falló, intentando configuración alternativa...');
-        
-        // Segundo intento con delay adicional
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        await store.enterAR();
-        console.log('AR iniciado en segundo intento');
-      }
-      
+      await store.enterAR();
+      console.log('AR iniciado correctamente');
       setLoading(false);
       
     } catch (error) {
@@ -530,19 +548,7 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
       setIsARMode(false);
       setLoading(false);
       
-      let errorMessage = 'No se pudo iniciar el modo AR.\n\n';
-      
-      if (error.message.includes('not connected')) {
-        errorMessage += '• El canvas 3D no está listo\n• Intenta esperar más tiempo\n• Refresca la página si persiste';
-      } else if (error.message.includes('not supported')) {
-        errorMessage += '• AR no soportado en este navegador\n• Intenta con Chrome/Edge en Android\n• Safari en iOS 12+';
-      } else if (error.message.includes('permission')) {
-        errorMessage += '• Permisos de cámara denegados\n• Permite acceso a la cámara\n• Revisa configuración del navegador';
-      } else {
-        errorMessage += '• Verifica conexión a internet\n• Usa navegador compatible con WebXR\n• Intenta en modo incógnito';
-      }
-      
-      alert(errorMessage);
+      alert('No se pudo iniciar AR. Asegúrate de permitir el acceso a la cámara y usar un navegador compatible con WebXR.');
     }
   };
 
@@ -558,7 +564,8 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
 
   if (!isOpen) return null;
 
-  if (isARMode) {
+  // Modo AR solo para Android
+  if (isARMode && !isIOS) {
     return (
       <div className="fixed inset-0 z-50 bg-black">
         <div className="absolute top-4 left-4 right-4 z-10 flex justify-between">
@@ -575,7 +582,6 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
           </div>
         </div>
 
-        {/* Canvas AR más robusto */}
         <Canvas
           style={{ width: '100%', height: '100%' }}
           dpr={[1, 1.5]}
@@ -593,17 +599,9 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
             near: 0.01,
             far: 20
           }}
-          onCreated={({ gl, scene, camera }) => {
+          onCreated={({ gl }) => {
             gl.xr.enabled = true;
-            console.log('AR Canvas created successfully');
-            camera.matrixAutoUpdate = false;
-            
-            setTimeout(() => {
-              console.log('Canvas AR completamente inicializado');
-            }, 500);
-          }}
-          onError={(error) => {
-            console.error('Canvas AR Error:', error);
+            console.log('AR Canvas created');
           }}
         >
           <XR store={store}>
@@ -730,11 +728,14 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
                 {checkingAR && (
                   <p className="text-blue-600 mt-1">🔍 Verificando soporte AR...</p>
                 )}
-                {!checkingAR && !arSupported && (
-                  <p className="text-orange-600 mt-1">⚠️ AR no disponible en este dispositivo</p>
+                {!checkingAR && isIOS && (
+                  <p className="text-blue-600 mt-1">📱 AR Quick Look disponible (requiere USDZ)</p>
                 )}
-                {!checkingAR && arSupported && (
-                  <p className="text-green-600 mt-1">🥽 AR experimental disponible</p>
+                {!checkingAR && !isIOS && !arSupported && (
+                  <p className="text-orange-600 mt-1">⚠️ WebXR AR no disponible</p>
+                )}
+                {!checkingAR && !isIOS && arSupported && (
+                  <p className="text-green-600 mt-1">🥽 WebXR AR disponible</p>
                 )}
               </div>
               <div className="flex gap-3">
@@ -746,23 +747,29 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
                 </button>
                 <button
                   className={`font-poppins px-4 py-2 rounded-md transition-colors duration-200 ${
-                    arSupported && !checkingAR && canvasReady
-                      ? 'bg-orange-500 hover:bg-orange-600 text-white' 
+                    !checkingAR
+                      ? isIOS 
+                        ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                        : arSupported && canvasReady
+                          ? 'bg-orange-500 hover:bg-orange-600 text-white' 
+                          : 'bg-neutral-300 text-neutral-500 cursor-not-allowed'
                       : 'bg-neutral-300 text-neutral-500 cursor-not-allowed'
                   }`}
                   onClick={handleARButtonClick}
-                  disabled={!arSupported || checkingAR || !canvasReady}
+                  disabled={checkingAR || (!isIOS && (!arSupported || !canvasReady))}
                   title={
                     checkingAR 
                       ? 'Verificando soporte AR...' 
-                      : !canvasReady
-                        ? 'Preparando canvas...'
-                      : !arSupported 
-                        ? 'AR no disponible en este dispositivo' 
-                        : 'Probar modo AR experimental'
+                      : isIOS
+                        ? 'Usar AR Quick Look (iOS)'
+                        : !canvasReady
+                          ? 'Preparando canvas...'
+                          : !arSupported 
+                            ? 'WebXR AR no disponible' 
+                            : 'Iniciar WebXR AR'
                   }
                 >
-                  🥽 {checkingAR ? 'Verificando...' : !canvasReady ? 'Preparando...' : 'Probar AR'}
+                  {isIOS ? '📱 Quick Look' : checkingAR ? 'Verificando...' : !canvasReady ? 'Preparando...' : '🥽 WebXR AR'}
                 </button>
               </div>
             </div>
@@ -770,7 +777,14 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
         </div>
       </div>
 
-      {/* NUEVO: Modal de información AR */}
+      {/* Modales */}
+      <IOSARModal 
+        isOpen={showIOSModal}
+        onClose={() => setShowIOSModal(false)}
+        onUseQuickLook={handleQuickLook}
+        itemName={itemName}
+      />
+
       <ARInfoModal 
         isOpen={showARInfo}
         onClose={() => setShowARInfo(false)}
