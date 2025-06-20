@@ -71,7 +71,7 @@ function Model({ modelPath, scale = 1.5, position = [0, 0, 0], onLoaded, onError
   return <group ref={modelRef} />;
 }
 
-// Controles para el modelo 3D normal - CORREGIDO
+// Controles para el modelo 3D normal
 function ModelControls({ children, enabled = true }) {
   const groupRef = useRef();
   const { gl } = useThree();
@@ -104,10 +104,8 @@ function ModelControls({ children, enabled = true }) {
     setIsDragging(false);
   }, []);
 
-  // CORREGIDO: Event listener para wheel sin preventDefault
   const handleWheel = useCallback((event) => {
     if (!enabled) return;
-    // No usar preventDefault para evitar el warning
     const delta = event.deltaY * -0.001;
     setZoom(prev => Math.max(0.5, Math.min(3, prev + delta)));
   }, [enabled]);
@@ -120,7 +118,6 @@ function ModelControls({ children, enabled = true }) {
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('mouseleave', handleMouseUp);
-    // CORREGIDO: Remover passive: false
     canvas.addEventListener('wheel', handleWheel);
 
     return () => {
@@ -153,7 +150,6 @@ function ARModel({ modelPath, onPlaced }) {
   const { isPresenting } = useXR();
   const [isPlaced, setIsPlaced] = useState(false);
 
-  // Función para colocar modelo
   const placeModel = useCallback((position = [0, -0.5, -1.5]) => {
     if (!isPlaced) {
       const newModel = {
@@ -169,7 +165,6 @@ function ARModel({ modelPath, onPlaced }) {
     }
   }, [isPlaced, onPlaced]);
 
-  // Auto-colocar modelo cuando inicia AR
   useEffect(() => {
     if (isPresenting && !isPlaced) {
       const timer = setTimeout(() => {
@@ -265,10 +260,14 @@ function ARInstructions() {
   );
 }
 
-// Función mejorada para detectar soporte AR - CORREGIDA
+// CORREGIDO: Función mejorada para detectar soporte AR con múltiples métodos
 function checkARSupport() {
   return new Promise((resolve) => {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isAndroid = /Android/.test(navigator.userAgent);
+    
+    console.log('Device Info:', { isMobile, isIOS, isAndroid });
     
     if (!navigator.xr) {
       console.log('WebXR not supported');
@@ -276,34 +275,47 @@ function checkARSupport() {
       return;
     }
 
-    // CORREGIDO: Mejor manejo del resultado
-    navigator.xr.isSessionSupported('immersive-ar')
-      .then((supported) => {
-        console.log('AR Session Support:', supported);
-        console.log('Is Mobile:', isMobile);
-        console.log('Navigator XR:', navigator.xr);
-        
-        // Resolver con boolean explícito
-        const finalSupport = Boolean(supported);
-        console.log('Final AR Support:', finalSupport);
-        resolve(finalSupport);
-      })
-      .catch((error) => {
-        console.log('AR Support Check Error:', error);
-        // En móviles, aún podría funcionar
-        const fallbackSupport = isMobile && !!navigator.xr;
-        console.log('Fallback AR Support:', fallbackSupport);
-        resolve(fallbackSupport);
-      });
+    // NUEVO: Intentar múltiples tipos de sesión AR
+    const sessionTypes = ['immersive-ar', 'ar'];
+    let checkedCount = 0;
+    let anySupported = false;
+
+    const checkSessionType = (sessionType) => {
+      navigator.xr.isSessionSupported(sessionType)
+        .then((supported) => {
+          console.log(`${sessionType} Support:`, supported);
+          if (supported) anySupported = true;
+          
+          checkedCount++;
+          if (checkedCount >= sessionTypes.length) {
+            // Si no hay soporte AR real, pero es móvil con WebXR, intentar de todos modos
+            const finalSupport = anySupported || (isMobile && !!navigator.xr);
+            console.log('Final AR Support Decision:', finalSupport);
+            resolve(finalSupport);
+          }
+        })
+        .catch((error) => {
+          console.log(`${sessionType} Check Error:`, error);
+          checkedCount++;
+          if (checkedCount >= sessionTypes.length) {
+            // Fallback para móviles
+            const fallbackSupport = isMobile && !!navigator.xr;
+            console.log('Fallback AR Support:', fallbackSupport);
+            resolve(fallbackSupport);
+          }
+        });
+    };
+
+    // Verificar todos los tipos de sesión
+    sessionTypes.forEach(checkSessionType);
   });
 }
 
-// Hook mejorado para manejar el Canvas AR
+// Hook para manejar el Canvas AR
 function useARCanvas() {
   const [canvasReady, setCanvasReady] = useState(false);
   
   useEffect(() => {
-    // Verificar soporte WebXR primero
     if (!navigator.xr) {
       setCanvasReady(false);
       return;
@@ -311,22 +323,20 @@ function useARCanvas() {
     
     let timeoutId;
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = 8;
     
     const checkCanvas = () => {
       attempts++;
-      
-      // Verificar si Three.js y WebXR están disponibles
-      const isReady = window.THREE && navigator.xr && attempts >= 3;
+      const isReady = window.THREE && navigator.xr && attempts >= 2;
       
       if (isReady || attempts >= maxAttempts) {
         setCanvasReady(isReady);
       } else {
-        timeoutId = setTimeout(checkCanvas, 500);
+        timeoutId = setTimeout(checkCanvas, 300);
       }
     };
     
-    timeoutId = setTimeout(checkCanvas, 1000);
+    timeoutId = setTimeout(checkCanvas, 500);
     
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
@@ -336,6 +346,57 @@ function useARCanvas() {
   return canvasReady;
 }
 
+// NUEVO: Componente Modal de información AR
+function ARInfoModal({ isOpen, onClose, onContinue }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-60 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+        <div className="text-center mb-6">
+          <div className="text-6xl mb-4">🥽</div>
+          <h3 className="text-xl font-playfair font-bold text-neutral-950 mb-2">
+            Modo AR Experimental
+          </h3>
+          <p className="text-sm text-neutral-600">
+            Tu dispositivo puede no tener soporte AR completo, pero podemos intentarlo de todos modos.
+          </p>
+        </div>
+
+        <div className="space-y-3 mb-6 text-sm text-neutral-700">
+          <div className="flex items-start gap-3">
+            <span className="text-green-500">✓</span>
+            <span>WebXR está disponible</span>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="text-orange-500">⚠️</span>
+            <span>AR inmersivo no detectado</span>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="text-blue-500">ℹ️</span>
+            <span>Necesitas permitir acceso a la cámara</span>
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 border border-neutral-300 text-neutral-700 hover:bg-neutral-100 font-poppins px-4 py-2 rounded-md transition-colors duration-200"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onContinue}
+            className="flex-1 bg-primary-500 hover:bg-primary-600 text-white font-poppins px-4 py-2 rounded-md transition-colors duration-200"
+          >
+            Intentar AR
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Componente principal del visor 3D - CORREGIDO
 function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [loading, setLoading] = useState(true);
@@ -343,6 +404,7 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [isARMode, setIsARMode] = useState(false);
   const [arSupported, setARSupported] = useState(false);
   const [checkingAR, setCheckingAR] = useState(true);
+  const [showARInfo, setShowARInfo] = useState(false); // NUEVO
   const canvasReady = useARCanvas();
 
   // Verificar soporte AR mejorado
@@ -385,7 +447,7 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     }
   }, [isOpen, modelPath]);
 
-  // NUEVO: Manejo del contexto perdido de WebGL
+  // Manejo del contexto perdido de WebGL
   useEffect(() => {
     const handleContextLost = (event) => {
       console.warn('WebGL context lost, preventing default behavior');
@@ -421,34 +483,46 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     setLoading(false);
   }, []);
 
-  // CORREGIDO: Mejor manejo de entrada AR
-  const handleEnterAR = async () => {
+  // NUEVO: Mostrar modal de información antes de AR
+  const handleARButtonClick = () => {
     if (!arSupported) {
-      alert('AR no está disponible. Requiere dispositivo móvil con navegador compatible.');
+      alert('AR no está disponible en este dispositivo. Necesitas un navegador compatible con WebXR.');
       return;
     }
+    setShowARInfo(true);
+  };
 
+  // CORREGIDO: Mejor manejo de entrada AR con intentos múltiples
+  const handleEnterAR = async () => {
+    setShowARInfo(false);
+    
     try {
       console.log('Iniciando proceso AR...');
-      
-      // Asegurar que el canvas normal se cierre primero
       setLoading(true);
       
-      // Esperar más tiempo para que el canvas AR se inicialice completamente
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Más tiempo de espera
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       setIsARMode(true);
+      await new Promise(resolve => setTimeout(resolve, 1500));
       
-      // Esperar que el canvas AR esté completamente montado
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Verificar que el store esté listo
       if (!store || typeof store.enterAR !== 'function') {
         throw new Error('AR Store no está inicializado correctamente');
       }
       
-      await store.enterAR();
-      console.log('AR iniciado correctamente');
+      // NUEVO: Intentar con configuraciones diferentes
+      try {
+        await store.enterAR();
+        console.log('AR iniciado correctamente');
+      } catch (firstError) {
+        console.log('Primer intento AR falló, intentando configuración alternativa...');
+        
+        // Segundo intento con delay adicional
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await store.enterAR();
+        console.log('AR iniciado en segundo intento');
+      }
+      
       setLoading(false);
       
     } catch (error) {
@@ -456,13 +530,16 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
       setIsARMode(false);
       setLoading(false);
       
-      let errorMessage = 'No se pudo iniciar el modo AR. ';
+      let errorMessage = 'No se pudo iniciar el modo AR.\n\n';
+      
       if (error.message.includes('not connected')) {
-        errorMessage += 'Intenta esperar unos segundos y vuelve a intentarlo.';
+        errorMessage += '• El canvas 3D no está listo\n• Intenta esperar más tiempo\n• Refresca la página si persiste';
       } else if (error.message.includes('not supported')) {
-        errorMessage += 'AR no soportado en este dispositivo.';
+        errorMessage += '• AR no soportado en este navegador\n• Intenta con Chrome/Edge en Android\n• Safari en iOS 12+';
+      } else if (error.message.includes('permission')) {
+        errorMessage += '• Permisos de cámara denegados\n• Permite acceso a la cámara\n• Revisa configuración del navegador';
       } else {
-        errorMessage += 'Verifica que tengas un navegador compatible con WebXR.';
+        errorMessage += '• Verifica conexión a internet\n• Usa navegador compatible con WebXR\n• Intenta en modo incógnito';
       }
       
       alert(errorMessage);
@@ -498,7 +575,7 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
           </div>
         </div>
 
-        {/* CORREGIDO: Canvas AR más robusto */}
+        {/* Canvas AR más robusto */}
         <Canvas
           style={{ width: '100%', height: '100%' }}
           dpr={[1, 1.5]}
@@ -517,14 +594,10 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
             far: 20
           }}
           onCreated={({ gl, scene, camera }) => {
-            // Configuración mejorada para AR
             gl.xr.enabled = true;
             console.log('AR Canvas created successfully');
-            
-            // Configurar la cámara para AR
             camera.matrixAutoUpdate = false;
             
-            // Asegurar que el canvas esté listo
             setTimeout(() => {
               console.log('Canvas AR completamente inicializado');
             }, 500);
@@ -553,148 +626,157 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-        {/* Header */}
-        <div className="flex justify-between items-center p-6 border-b border-neutral-200">
-          <div>
-            <h3 className="text-2xl font-playfair font-bold text-neutral-950">
-              Vista 3D: {itemName}
-            </h3>
-            <p className="text-sm font-poppins text-neutral-600 mt-1">
-              Arrastra para rotar, rueda del mouse para zoom
-            </p>
+    <>
+      <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+          {/* Header */}
+          <div className="flex justify-between items-center p-6 border-b border-neutral-200">
+            <div>
+              <h3 className="text-2xl font-playfair font-bold text-neutral-950">
+                Vista 3D: {itemName}
+              </h3>
+              <p className="text-sm font-poppins text-neutral-600 mt-1">
+                Arrastra para rotar, rueda del mouse para zoom
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-neutral-500 hover:text-neutral-700 text-2xl font-bold w-8 h-8 flex items-center justify-center rounded-full hover:bg-neutral-100 transition-colors duration-200"
+            >
+              ×
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="text-neutral-500 hover:text-neutral-700 text-2xl font-bold w-8 h-8 flex items-center justify-center rounded-full hover:bg-neutral-100 transition-colors duration-200"
-          >
-            ×
-          </button>
-        </div>
 
-        {/* Visor 3D */}
-        <div className="relative h-96 md:h-[500px] bg-gradient-to-br from-neutral-50 to-neutral-100">
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center z-10">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
-                <p className="text-neutral-600 font-poppins">Cargando modelo 3D...</p>
+          {/* Visor 3D */}
+          <div className="relative h-96 md:h-[500px] bg-gradient-to-br from-neutral-50 to-neutral-100">
+            {loading && (
+              <div className="absolute inset-0 flex items-center justify-center z-10">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
+                  <p className="text-neutral-600 font-poppins">Cargando modelo 3D...</p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {error && (
-            <div className="absolute inset-0 flex items-center justify-center z-10">
-              <div className="text-center">
-                <div className="text-6xl mb-4">🍽️</div>
-                <p className="text-neutral-600 font-poppins">{error}</p>
+            {error && (
+              <div className="absolute inset-0 flex items-center justify-center z-10">
+                <div className="text-center">
+                  <div className="text-6xl mb-4">🍽️</div>
+                  <p className="text-neutral-600 font-poppins">{error}</p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {modelPath && !error && (
-            <div className="w-full h-full">
-              <Canvas
-                dpr={[1, 2]}
-                camera={{ 
-                  position: [0, 2, 4], 
-                  fov: 45,
-                  near: 0.1,
-                  far: 1000
-                }}
-                gl={{ 
-                  preserveDrawingBuffer: true,
-                  antialias: true,
-                  alpha: false,
-                  powerPreference: "high-performance"
-                }}
-                shadows="soft"
-                style={{ background: 'transparent' }}
-              >
-                <ambientLight intensity={0.5} />
-                <directionalLight 
-                  position={[10, 10, 5]} 
-                  intensity={1.2}
-                  castShadow
-                  shadow-mapSize={[2048, 2048]}
-                />
-                <pointLight position={[-10, -10, -5]} intensity={0.3} />
+            {modelPath && !error && (
+              <div className="w-full h-full">
+                <Canvas
+                  dpr={[1, 2]}
+                  camera={{ 
+                    position: [0, 2, 4], 
+                    fov: 45,
+                    near: 0.1,
+                    far: 1000
+                  }}
+                  gl={{ 
+                    preserveDrawingBuffer: true,
+                    antialias: true,
+                    alpha: false,
+                    powerPreference: "high-performance"
+                  }}
+                  shadows="soft"
+                  style={{ background: 'transparent' }}
+                >
+                  <ambientLight intensity={0.5} />
+                  <directionalLight 
+                    position={[10, 10, 5]} 
+                    intensity={1.2}
+                    castShadow
+                    shadow-mapSize={[2048, 2048]}
+                  />
+                  <pointLight position={[-10, -10, -5]} intensity={0.3} />
 
-                <Environment preset="studio" />
+                  <Environment preset="studio" />
 
-                <ModelControls enabled={true}>
-                  <Suspense fallback={
-                    <Html center>
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-                    </Html>
-                  }>
-                    <Model
-                      modelPath={modelPath}
-                      scale={1.5}
-                      position={[0, 0, 0]}
-                      onLoaded={handleModelLoad}
-                      onError={handleModelError}
-                    />
-                  </Suspense>
-                </ModelControls>
+                  <ModelControls enabled={true}>
+                    <Suspense fallback={
+                      <Html center>
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                      </Html>
+                    }>
+                      <Model
+                        modelPath={modelPath}
+                        scale={1.5}
+                        position={[0, 0, 0]}
+                        onLoaded={handleModelLoad}
+                        onError={handleModelError}
+                      />
+                    </Suspense>
+                  </ModelControls>
 
-                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.5, 0]} receiveShadow>
-                  <planeGeometry args={[20, 20]} />
-                  <meshLambertMaterial color="#f0f0f0" transparent opacity={0.3} />
-                </mesh>
-              </Canvas>
-            </div>
-          )}
-        </div>
+                  <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.5, 0]} receiveShadow>
+                    <planeGeometry args={[20, 20]} />
+                    <meshLambertMaterial color="#f0f0f0" transparent opacity={0.3} />
+                  </mesh>
+                </Canvas>
+              </div>
+            )}
+          </div>
 
-        {/* Footer */}
-        <div className="p-6 border-t border-neutral-200 bg-neutral-50">
-          <div className="flex justify-between items-center">
-            <div className="text-sm font-poppins text-neutral-600">
-              <p>💡 <strong>Tip:</strong> Arrastra para rotar, rueda del mouse para zoom</p>
-              {checkingAR && (
-                <p className="text-blue-600 mt-1">🔍 Verificando soporte AR...</p>
-              )}
-              {!checkingAR && !arSupported && (
-                <p className="text-orange-600 mt-1">⚠️ AR requiere dispositivo móvil compatible</p>
-              )}
-              {!checkingAR && arSupported && (
-                <p className="text-green-600 mt-1">✅ AR disponible</p>
-              )}
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={onClose}
-                className="border border-neutral-300 text-neutral-700 hover:bg-neutral-100 font-poppins px-4 py-2 rounded-md transition-colors duration-200"
-              >
-                Cerrar
-              </button>
-              <button
-                className={`font-poppins px-4 py-2 rounded-md transition-colors duration-200 ${
-                  arSupported && !checkingAR && canvasReady
-                    ? 'bg-primary-500 hover:bg-primary-600 text-white' 
-                    : 'bg-neutral-300 text-neutral-500 cursor-not-allowed'
-                }`}
-                onClick={handleEnterAR}
-                disabled={!arSupported || checkingAR || !canvasReady}
-                title={
-                  checkingAR 
-                    ? 'Verificando soporte AR...' 
-                    : !canvasReady
-                      ? 'Preparando canvas...'
-                    : !arSupported 
-                      ? 'AR requiere dispositivo móvil compatible' 
-                      : 'Activar modo AR'
-                }
-              >
-                🥽 {checkingAR ? 'Verificando...' : !canvasReady ? 'Preparando...' : 'Modo AR'}
-              </button>
+          {/* Footer */}
+          <div className="p-6 border-t border-neutral-200 bg-neutral-50">
+            <div className="flex justify-between items-center">
+              <div className="text-sm font-poppins text-neutral-600">
+                <p>💡 <strong>Tip:</strong> Arrastra para rotar, rueda del mouse para zoom</p>
+                {checkingAR && (
+                  <p className="text-blue-600 mt-1">🔍 Verificando soporte AR...</p>
+                )}
+                {!checkingAR && !arSupported && (
+                  <p className="text-orange-600 mt-1">⚠️ AR no disponible en este dispositivo</p>
+                )}
+                {!checkingAR && arSupported && (
+                  <p className="text-green-600 mt-1">🥽 AR experimental disponible</p>
+                )}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={onClose}
+                  className="border border-neutral-300 text-neutral-700 hover:bg-neutral-100 font-poppins px-4 py-2 rounded-md transition-colors duration-200"
+                >
+                  Cerrar
+                </button>
+                <button
+                  className={`font-poppins px-4 py-2 rounded-md transition-colors duration-200 ${
+                    arSupported && !checkingAR && canvasReady
+                      ? 'bg-orange-500 hover:bg-orange-600 text-white' 
+                      : 'bg-neutral-300 text-neutral-500 cursor-not-allowed'
+                  }`}
+                  onClick={handleARButtonClick}
+                  disabled={!arSupported || checkingAR || !canvasReady}
+                  title={
+                    checkingAR 
+                      ? 'Verificando soporte AR...' 
+                      : !canvasReady
+                        ? 'Preparando canvas...'
+                      : !arSupported 
+                        ? 'AR no disponible en este dispositivo' 
+                        : 'Probar modo AR experimental'
+                  }
+                >
+                  🥽 {checkingAR ? 'Verificando...' : !canvasReady ? 'Preparando...' : 'Probar AR'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {/* NUEVO: Modal de información AR */}
+      <ARInfoModal 
+        isOpen={showARInfo}
+        onClose={() => setShowARInfo(false)}
+        onContinue={handleEnterAR}
+      />
+    </>
   );
 }
 
