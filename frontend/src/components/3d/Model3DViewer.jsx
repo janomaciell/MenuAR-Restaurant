@@ -1,7 +1,16 @@
 import React, { useRef, useEffect, useState, Suspense, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useGLTF, Environment, Html } from '@react-three/drei';
+import { 
+  XR, 
+  useXR, 
+  Interactive,
+  createXRStore
+} from '@react-three/xr';
 import * as THREE from 'three';
+
+// Crear store XR
+const store = createXRStore();
 
 // Componente del modelo mejorado
 function Model({ modelPath, scale = 1.5, position = [0, 0, 0], onLoaded, onError, rotation = [0, 0, 0] }) {
@@ -59,7 +68,7 @@ function Model({ modelPath, scale = 1.5, position = [0, 0, 0], onLoaded, onError
   return <group ref={modelRef} />;
 }
 
-// Controles para el modelo 3D
+// Controles para el modelo 3D normal
 function ModelControls({ children, enabled = true }) {
   const groupRef = useRef();
   const { gl } = useThree();
@@ -133,11 +142,130 @@ function ModelControls({ children, enabled = true }) {
   );
 }
 
-// Componente principal del visor 3D
+// Componente para el modelo AR con hit testing real
+function ARModel({ modelPath, onPlaced }) {
+  const [models, setModels] = useState([]);
+  const { isPresenting } = useXR();
+  
+  // Hit testing real con WebXR
+  useHitTest((hitMatrix, hit) => {
+    if (!isPresenting) return;
+    
+    // Crear nuevo modelo en la posición detectada
+    const position = new THREE.Vector3();
+    const rotation = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    
+    hitMatrix.decompose(position, rotation, scale);
+    
+    const newModel = {
+      id: Date.now(),
+      position: position.toArray(),
+      rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
+      scale: 0.3
+    };
+    
+    setModels(prev => [...prev, newModel]);
+    onPlaced?.(newModel);
+  });
+
+  return (
+    <>
+      {models.map((model) => (
+        <Interactive 
+          key={model.id}
+          onSelect={() => console.log('Model selected:', model.id)}
+          onHover={() => console.log('Model hovered:', model.id)}
+        >
+          <group 
+            position={model.position}
+            quaternion={model.rotation}
+            scale={model.scale}
+          >
+            <Suspense fallback={null}>
+              <Model
+                modelPath={modelPath}
+                scale={1}
+                position={[0, 0, 0]}
+                onLoaded={() => console.log('AR Model loaded')}
+                onError={(err) => console.error('AR Model error:', err)}
+              />
+            </Suspense>
+            
+            {/* Sombra circular debajo del modelo */}
+            <mesh position={[0, -0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <circleGeometry args={[0.5, 32]} />
+              <meshBasicMaterial color="black" transparent opacity={0.3} />
+            </mesh>
+          </group>
+        </Interactive>
+      ))}
+    </>
+  );
+}
+
+// Componente para mostrar instrucciones AR
+function ARInstructions() {
+  const [showInstructions, setShowInstructions] = useState(true);
+  const { isPresenting } = useXR();
+
+  useEffect(() => {
+    if (isPresenting) {
+      const timer = setTimeout(() => setShowInstructions(false), 5000);
+      return () => clearTimeout(timer);
+    } else {
+      setShowInstructions(true);
+    }
+  }, [isPresenting]);
+
+  if (!isPresenting || !showInstructions) return null;
+
+  return (
+    <Html 
+      center 
+      distanceFactor={10}
+      style={{
+        color: 'white',
+        background: 'rgba(0,0,0,0.8)',
+        padding: '20px',
+        borderRadius: '10px',
+        textAlign: 'center',
+        fontFamily: 'Arial, sans-serif',
+        userSelect: 'none',
+        pointerEvents: 'none'
+      }}
+    >
+      <div>
+        <h3>🎯 Modo AR Activado</h3>
+        <p>Apunta tu dispositivo hacia una superficie</p>
+        <p>Toca la pantalla para colocar el objeto</p>
+      </div>
+    </Html>
+  );
+}
+
+// Componente principal del visor 3D actualizado
 function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isARMode, setIsARMode] = useState(false);
+  const [arSupported, setARSupported] = useState(false);
+
+  // Verificar soporte AR
+  useEffect(() => {
+    if (navigator.xr) {
+      navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+        setARSupported(supported);
+        console.log('AR Support:', supported);
+      }).catch((err) => {
+        console.log('AR Support Check Error:', err);
+        setARSupported(false);
+      });
+    } else {
+      console.log('WebXR not available');
+      setARSupported(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (isOpen && modelPath) {
@@ -156,24 +284,65 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     setLoading(false);
   }, []);
 
-  const handleARMode = () => {
-    setIsARMode(true);
+  const handleEnterAR = () => {
+    if (arSupported) {
+      setIsARMode(true);
+      // Iniciar sesión AR
+      store.enterAR();
+    }
+  };
+
+  const handleExitAR = () => {
+    setIsARMode(false);
+    store.exitAR();
   };
 
   if (!isOpen) return null;
 
   if (isARMode) {
     return (
-      <ARViewer
-        modelPath={modelPath}
-        itemName={itemName}
-        isOpen={isOpen}
-        onClose={() => {
-          setIsARMode(false);
-          onClose();
-        }}
-        onBackToNormal={() => setIsARMode(false)}
-      />
+      <div className="fixed inset-0 z-50 bg-black">
+        {/* Botón para salir AR */}
+        <button
+          onClick={handleExitAR}
+          className="absolute top-4 right-4 z-10 bg-red-500 hover:bg-red-600 text-white font-poppins px-4 py-2 rounded-md transition-colors duration-200"
+          style={{ pointerEvents: 'auto' }}
+        >
+          Salir AR
+        </button>
+
+        <Canvas
+          style={{ width: '100%', height: '100%' }}
+          dpr={[1, 2]}
+          gl={{ 
+            preserveDrawingBuffer: true,
+            alpha: true,
+            antialias: true
+          }}
+        >
+          <XR store={store}>
+            {/* Luces optimizadas para AR */}
+            <ambientLight intensity={0.8} />
+            <directionalLight 
+              position={[5, 5, 5]} 
+              intensity={1.5}
+              castShadow
+              shadow-mapSize={[1024, 1024]}
+            />
+            
+            <Environment preset="park" />
+            
+            {/* Modelo AR con hit testing real */}
+            <ARModel 
+              modelPath={modelPath}
+              onPlaced={(model) => console.log('Model placed:', model)}
+            />
+            
+            {/* Instrucciones */}
+            <ARInstructions />
+          </XR>
+        </Canvas>
+      </div>
     );
   }
 
@@ -278,6 +447,12 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
           <div className="flex justify-between items-center">
             <div className="text-sm font-poppins text-neutral-600">
               <p>💡 <strong>Tip:</strong> Arrastra para rotar, rueda del mouse para zoom</p>
+              {!arSupported && (
+                <p className="text-orange-600 mt-1">⚠️ AR no disponible en este dispositivo</p>
+              )}
+              {arSupported && (
+                <p className="text-green-600 mt-1">✅ AR disponible</p>
+              )}
             </div>
             <div className="flex gap-3">
               <button
@@ -287,438 +462,21 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
                 Cerrar
               </button>
               <button
-                className="bg-primary-500 hover:bg-primary-600 text-white font-poppins px-4 py-2 rounded-md transition-colors duration-200"
-                onClick={handleARMode}
+                className={`font-poppins px-4 py-2 rounded-md transition-colors duration-200 ${
+                  arSupported 
+                    ? 'bg-primary-500 hover:bg-primary-600 text-white' 
+                    : 'bg-neutral-300 text-neutral-500 cursor-not-allowed'
+                }`}
+                onClick={handleEnterAR}
+                disabled={!arSupported}
+                title={!arSupported ? 'AR no soportado en este dispositivo' : 'Activar modo AR'}
               >
-                🥽 Modo AR
+                🥽 Modo AR Real
               </button>
             </div>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// Componente AR completamente rediseñado y corregido
-function ARViewer({ modelPath, itemName, onClose, onBackToNormal, isOpen }) {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
-  const textureRef = useRef(null);
-  const mountedRef = useRef(true);
-  
-  const [isReady, setIsReady] = useState(false);
-  const [error, setError] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Estados para detección de superficie (simulados)
-  const [surfaceData, setSurfaceData] = useState({
-    detected: false,
-    position: [0, 0, -1],
-    confidence: 0,
-    dimensions: { width: 0, height: 0 }
-  });
-
-  // Estados para el modelo
-  const [modelState, setModelState] = useState({
-    position: [0, 0, -1],
-    scale: 0.3,
-    rotation: [0, 0, 0],
-    isPlaced: false
-  });
-
-  // Función para limpiar recursos
-  const cleanupResources = useCallback(() => {
-    console.log('ARViewer: Cleaning up resources...');
-    
-    // Detener stream
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => {
-        track.stop();
-        console.log('ARViewer: Track stopped:', track.kind);
-      });
-      streamRef.current = null;
-    }
-
-    // Limpiar video element
-    if (videoRef.current) {
-      videoRef.current.pause();
-      videoRef.current.srcObject = null;
-      videoRef.current.load(); // Reset video element
-      if (videoRef.current.parentNode) {
-        videoRef.current.parentNode.removeChild(videoRef.current);
-      }
-      videoRef.current = null;
-    }
-
-    // Limpiar texture
-    if (textureRef.current) {
-      textureRef.current.dispose();
-      textureRef.current = null;
-    }
-
-    setIsReady(false);
-    setIsLoading(true);
-  }, []);
-
-  // Configuración de la cámara
-  const initializeCamera = useCallback(async () => {
-    if (!mountedRef.current) return;
-    
-    console.log('ARViewer: Initializing camera...');
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // Limpiar recursos previos
-      cleanupResources();
-
-      // Crear nuevo elemento video
-      const videoElement = document.createElement('video');
-      videoElement.autoplay = true;
-      videoElement.playsInline = true;
-      videoElement.muted = true;
-      videoElement.style.position = 'absolute';
-      videoElement.style.top = '-9999px';
-      videoElement.style.left = '-9999px';
-      videoElement.style.width = '1px';
-      videoElement.style.height = '1px';
-      
-      document.body.appendChild(videoElement);
-      videoRef.current = videoElement;
-
-      // Configurar constraints
-      const constraints = {
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
-          frameRate: { ideal: 30 }
-        },
-        audio: false,
-      };
-
-      // Obtener stream
-      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-      
-      if (!mountedRef.current) {
-        mediaStream.getTracks().forEach(track => track.stop());
-        return;
-      }
-
-      streamRef.current = mediaStream;
-      console.log('ARViewer: Stream obtained successfully');
-
-      // Configurar video
-      videoElement.srcObject = mediaStream;
-
-      // Esperar a que el video esté listo
-      await new Promise((resolve, reject) => {
-        const timeoutId = setTimeout(() => {
-          reject(new Error('Video metadata loading timeout'));
-        }, 10000);
-
-        const onLoadedMetadata = () => {
-          clearTimeout(timeoutId);
-          console.log('ARViewer: Video metadata loaded');
-          resolve();
-        };
-
-        const onError = (err) => {
-          clearTimeout(timeoutId);
-          console.error('ARViewer: Video error:', err);
-          reject(err);
-        };
-
-        videoElement.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
-        videoElement.addEventListener('error', onError, { once: true });
-      });
-
-      // Reproducir video
-      await videoElement.play();
-      console.log('ARViewer: Video playing successfully');
-
-      if (mountedRef.current) {
-        setIsReady(true);
-        setIsLoading(false);
-        startSurfaceDetection();
-      }
-
-    } catch (err) {
-      console.error('ARViewer: Camera initialization error:', err);
-      
-      if (!mountedRef.current) return;
-
-      let errorMessage = 'No se pudo acceder a la cámara.';
-      
-      if (err.name === 'NotAllowedError') {
-        errorMessage = 'Permisos de cámara denegados. Por favor, permite el acceso a la cámara.';
-      } else if (err.name === 'NotFoundError') {
-        errorMessage = 'No se encontró ninguna cámara disponible.';
-      } else if (err.name === 'NotReadableError') {
-        errorMessage = 'La cámara está siendo usada por otra aplicación.';
-      } else if (err.name === 'OverconstrainedError') {
-        errorMessage = 'Las restricciones de la cámara no se pueden cumplir.';
-      } else if (err.name === 'AbortError') {
-        errorMessage = 'La inicialización de la cámara fue interrumpida.';
-      }
-      
-      setError(errorMessage);
-      setIsLoading(false);
-    }
-  }, [cleanupResources]);
-
-  // Detección de superficie simulada
-  const startSurfaceDetection = useCallback(() => {
-    let detectionProgress = 0;
-    const detectionInterval = setInterval(() => {
-      if (!mountedRef.current) {
-        clearInterval(detectionInterval);
-        return;
-      }
-
-      detectionProgress += 0.1;
-      
-      if (detectionProgress >= 1) {
-        setSurfaceData(prev => ({
-          ...prev,
-          detected: true,
-          confidence: 1,
-          dimensions: { width: 1.2, height: 0.8 },
-          position: [0, -0.5, -1]
-        }));
-        setModelState(prev => ({
-          ...prev,
-          position: [0, -0.4, -1],
-          scale: 0.2,
-          isPlaced: true
-        }));
-        clearInterval(detectionInterval);
-      } else {
-        setSurfaceData(prev => ({
-          ...prev,
-          confidence: detectionProgress
-        }));
-      }
-    }, 200);
-
-    return () => clearInterval(detectionInterval);
-  }, []);
-
-  // Componente para manejar el fondo de video
-  const VideoBackground = () => {
-    const { scene } = useThree();
-    
-    useEffect(() => {
-      if (!videoRef.current || !mountedRef.current) return;
-      
-      const video = videoRef.current;
-      
-      const updateTexture = () => {
-        if (video.readyState >= video.HAVE_CURRENT_DATA) {
-          if (!textureRef.current) {
-            textureRef.current = new THREE.VideoTexture(video);
-            textureRef.current.minFilter = THREE.LinearFilter;
-            textureRef.current.magFilter = THREE.LinearFilter;
-            textureRef.current.format = THREE.RGBAFormat;
-            scene.background = textureRef.current;
-            console.log('ARViewer: Video texture created and set as background');
-          }
-          textureRef.current.needsUpdate = true;
-        }
-      };
-
-      // Actualizar inmediatamente si el video ya está listo
-      updateTexture();
-
-      // Escuchar eventos del video
-      video.addEventListener('loadeddata', updateTexture);
-      video.addEventListener('timeupdate', updateTexture);
-
-      return () => {
-        video.removeEventListener('loadeddata', updateTexture);
-        video.removeEventListener('timeupdate', updateTexture);
-      };
-    }, [scene]);
-
-    return null;
-  };
-
-  // Modelo AR con tracking
-  const ARModel = () => {
-    const modelRef = useRef();
-    const [deviceMotion, setDeviceMotion] = useState({ x: 0, y: 0, z: 0 });
-    
-    useEffect(() => {
-      const handleDeviceMotion = (event) => {
-        if (event.accelerationIncludingGravity) {
-          setDeviceMotion({
-            x: event.accelerationIncludingGravity.x || 0,
-            y: event.accelerationIncludingGravity.y || 0,
-            z: event.accelerationIncludingGravity.z || 0
-          });
-        }
-      };
-
-      window.addEventListener('devicemotion', handleDeviceMotion);
-      return () => window.removeEventListener('devicemotion', handleDeviceMotion);
-    }, []);
-
-    useFrame(() => {
-      if (modelRef.current && modelState.isPlaced) {
-        const dampingFactor = 0.1;
-        const motionOffset = {
-          x: deviceMotion.x * dampingFactor * 0.01,
-          y: deviceMotion.y * dampingFactor * 0.01,
-          z: 0
-        };
-
-        modelRef.current.position.set(
-          modelState.position[0] + motionOffset.x,
-          modelState.position[1] + motionOffset.y,
-          modelState.position[2]
-        );
-        modelRef.current.scale.setScalar(modelState.scale);
-      }
-    });
-
-    return (
-      <group ref={modelRef}>
-        <Suspense fallback={null}>
-          <Model
-            modelPath={modelPath}
-            scale={1}
-            position={[0, 0, 0]}
-            onLoaded={() => {}}
-            onError={() => {}}
-          />
-        </Suspense>
-      </group>
-    );
-  };
-
-  // Effect principal para inicializar cuando se abre
-  useEffect(() => {
-    mountedRef.current = true;
-    
-    if (isOpen) {
-      initializeCamera();
-    }
-
-    return () => {
-      mountedRef.current = false;
-      cleanupResources();
-    };
-  }, [isOpen]); // Solo depende de isOpen para evitar re-renders
-
-  // Cleanup al desmontar
-  useEffect(() => {
-    return () => {
-      console.log('ARViewer: Component unmounting');
-      mountedRef.current = false;
-      cleanupResources();
-    };
-  }, []);
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black flex items-center justify-center">
-      {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/70 text-white">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
-            <p className="text-lg font-poppins">Preparando cámara AR...</p>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/70 text-white">
-          <div className="text-center p-4">
-            <p className="text-lg font-poppins text-red-400">Error en Modo AR:</p>
-            <p className="text-md font-poppins mt-2">{error}</p>
-            <button
-              onClick={onBackToNormal}
-              className="mt-6 bg-primary-500 hover:bg-primary-600 text-white font-poppins px-6 py-3 rounded-md transition-colors duration-200"
-            >
-              Volver
-            </button>
-          </div>
-        </div>
-      )}
-
-      {isReady && !error && (
-        <div className="w-full h-full relative">
-          <Canvas
-            ref={canvasRef}
-            dpr={[1, 2]}
-            camera={{
-              position: [0, 0, 0],
-              fov: 75,
-              near: 0.1,
-              far: 1000
-            }}
-            gl={{
-              preserveDrawingBuffer: true,
-              antialias: true,
-              alpha: true,
-              powerPreference: "high-performance"
-            }}
-            shadows="soft"
-            style={{ background: 'transparent' }}
-          >
-            <VideoBackground />
-            
-            <ambientLight intensity={0.5} />
-            <directionalLight
-              position={[10, 10, 5]}
-              intensity={1.2}
-              castShadow
-              shadow-mapSize={[2048, 2048]}
-            />
-            <pointLight position={[-10, -10, -5]} intensity={0.3} />
-
-            <Environment preset="studio" />
-
-            {surfaceData.detected && modelState.isPlaced && <ARModel />}
-
-            {/* UI para detección de superficie */}
-            {!surfaceData.detected && (
-              <Html center>
-                <div className="text-white text-center p-4 bg-black/50 rounded-lg">
-                  <p className="text-lg font-poppins">Buscando superficie...</p>
-                  <div className="w-24 h-2 bg-neutral-600 rounded-full mx-auto mt-2">
-                    <div
-                      className="h-full bg-primary-500 rounded-full transition-all duration-300"
-                      style={{ width: `${surfaceData.confidence * 100}%` }}
-                    ></div>
-                  </div>
-                </div>
-              </Html>
-            )}
-
-            {/* Simulación de plano de superficie */}
-            {surfaceData.detected && (
-              <mesh position={surfaceData.position} rotation={[-Math.PI / 2, 0, 0]}>
-                <planeGeometry args={[surfaceData.dimensions.width, surfaceData.dimensions.height]} />
-                <meshBasicMaterial color="blue" transparent opacity={0.2} />
-              </mesh>
-            )}
-          </Canvas>
-
-          {/* Botones de control AR */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-4 z-20">
-            <button
-              onClick={onBackToNormal}
-              className="bg-neutral-700 hover:bg-neutral-800 text-white font-poppins px-4 py-2 rounded-md transition-colors duration-200"
-            >
-              Volver
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
