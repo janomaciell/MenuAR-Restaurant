@@ -1,2 +1,5 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Ignore dist when building automatically
+dist/
+
+# Allow .vercel folder (required for Vercel CLI linked project)
+!.vercel
