@@ -275,8 +275,8 @@ function checkARSupport() {
       return;
     }
 
-    // NUEVO: Intentar múltiples tipos de sesión AR
-    const sessionTypes = ['immersive-ar', 'ar'];
+    // CORREGIDO: Solo usar valores válidos para XRSessionMode
+    const sessionTypes = ['immersive-ar'];
     let checkedCount = 0;
     let anySupported = false;
 
