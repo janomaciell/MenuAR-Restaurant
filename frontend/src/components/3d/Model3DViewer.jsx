@@ -142,40 +142,56 @@ function ModelControls({ children, enabled = true }) {
   );
 }
 
-// Componente para el modelo AR con hit testing real
+// Componente para el modelo AR simplificado
 function ARModel({ modelPath, onPlaced }) {
   const [models, setModels] = useState([]);
-  const { isPresenting } = useXR();
-  
-  // Hit testing real con WebXR
-  useHitTest((hitMatrix, hit) => {
-    if (!isPresenting) return;
+  const { isPresenting, session } = useXR();
+  const [isPlaced, setIsPlaced] = useState(false);
+
+  // Función para colocar modelo (simulada por ahora sin hit testing complejo)
+  const placeModel = useCallback((position = [0, -1, -2]) => {
+    if (!isPlaced) {
+      const newModel = {
+        id: Date.now(),
+        position: position,
+        rotation: [0, 0, 0, 1],
+        scale: 0.5
+      };
+      
+      setModels([newModel]);
+      setIsPlaced(true);
+      onPlaced?.(newModel);
+    }
+  }, [isPlaced, onPlaced]);
+
+  // Auto-colocar modelo cuando inicia AR
+  useEffect(() => {
+    if (isPresenting && !isPlaced) {
+      // Colocar automáticamente el modelo frente al usuario
+      const timer = setTimeout(() => {
+        placeModel([0, -0.5, -1.5]);
+      }, 1000);
+      
+      return () => clearTimeout(timer);
+    }
     
-    // Crear nuevo modelo en la posición detectada
-    const position = new THREE.Vector3();
-    const rotation = new THREE.Quaternion();
-    const scale = new THREE.Vector3();
-    
-    hitMatrix.decompose(position, rotation, scale);
-    
-    const newModel = {
-      id: Date.now(),
-      position: position.toArray(),
-      rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
-      scale: 0.3
-    };
-    
-    setModels(prev => [...prev, newModel]);
-    onPlaced?.(newModel);
-  });
+    if (!isPresenting) {
+      setModels([]);
+      setIsPlaced(false);
+    }
+  }, [isPresenting, isPlaced, placeModel]);
 
   return (
     <>
       {models.map((model) => (
         <Interactive 
           key={model.id}
-          onSelect={() => console.log('Model selected:', model.id)}
-          onHover={() => console.log('Model hovered:', model.id)}
+          onSelect={() => {
+            console.log('Model selected:', model.id);
+            // Permitir reposicionar tocando
+            setIsPlaced(false);
+            setModels([]);
+          }}
         >
           <group 
             position={model.position}
@@ -194,8 +210,8 @@ function ARModel({ modelPath, onPlaced }) {
             
             {/* Sombra circular debajo del modelo */}
             <mesh position={[0, -0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-              <circleGeometry args={[0.5, 32]} />
-              <meshBasicMaterial color="black" transparent opacity={0.3} />
+              <circleGeometry args={[0.3, 32]} />
+              <meshBasicMaterial color="black" transparent opacity={0.2} />
             </mesh>
           </group>
         </Interactive>
@@ -211,7 +227,7 @@ function ARInstructions() {
 
   useEffect(() => {
     if (isPresenting) {
-      const timer = setTimeout(() => setShowInstructions(false), 5000);
+      const timer = setTimeout(() => setShowInstructions(false), 8000);
       return () => clearTimeout(timer);
     } else {
       setShowInstructions(true);
@@ -224,24 +240,59 @@ function ARInstructions() {
     <Html 
       center 
       distanceFactor={10}
+      position={[0, 1, -2]}
       style={{
         color: 'white',
         background: 'rgba(0,0,0,0.8)',
-        padding: '20px',
+        padding: '15px 20px',
         borderRadius: '10px',
         textAlign: 'center',
         fontFamily: 'Arial, sans-serif',
         userSelect: 'none',
-        pointerEvents: 'none'
+        pointerEvents: 'none',
+        fontSize: '14px',
+        maxWidth: '280px'
       }}
     >
       <div>
-        <h3>🎯 Modo AR Activado</h3>
-        <p>Apunta tu dispositivo hacia una superficie</p>
-        <p>Toca la pantalla para colocar el objeto</p>
+        <h3 style={{ margin: '0 0 10px 0', fontSize: '16px' }}>🎯 Modo AR Activado</h3>
+        <p style={{ margin: '5px 0', fontSize: '12px' }}>El objeto aparecerá automáticamente</p>
+        <p style={{ margin: '5px 0', fontSize: '12px' }}>Toca el modelo para reposicionarlo</p>
       </div>
     </Html>
   );
+}
+
+// Función mejorada para detectar soporte AR
+function checkARSupport() {
+  return new Promise((resolve) => {
+    // Verificar si es un dispositivo móvil
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    // Verificar si tiene WebXR
+    if (!navigator.xr) {
+      console.log('WebXR not supported');
+      resolve(false);
+      return;
+    }
+
+    // Verificar soporte para AR
+    navigator.xr.isSessionSupported('immersive-ar')
+      .then((supported) => {
+        console.log('AR Session Support:', supported);
+        console.log('Is Mobile:', isMobile);
+        
+        // En móviles modernos con WebXR, debería funcionar
+        const finalSupport = supported || (isMobile && navigator.xr);
+        resolve(finalSupport);
+      })
+      .catch((error) => {
+        console.log('AR Support Check Error:', error);
+        // En caso de error, asumir soporte si es móvil con WebXR
+        const fallbackSupport = isMobile && navigator.xr;
+        resolve(fallbackSupport);
+      });
+  });
 }
 
 // Componente principal del visor 3D actualizado
@@ -250,21 +301,38 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [error, setError] = useState(null);
   const [isARMode, setIsARMode] = useState(false);
   const [arSupported, setARSupported] = useState(false);
+  const [checkingAR, setCheckingAR] = useState(true);
 
-  // Verificar soporte AR
+  // Verificar soporte AR mejorado
   useEffect(() => {
-    if (navigator.xr) {
-      navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-        setARSupported(supported);
-        console.log('AR Support:', supported);
-      }).catch((err) => {
-        console.log('AR Support Check Error:', err);
-        setARSupported(false);
-      });
-    } else {
-      console.log('WebXR not available');
-      setARSupported(false);
-    }
+    let mounted = true;
+    
+    const checkSupport = async () => {
+      try {
+        setCheckingAR(true);
+        const supported = await checkARSupport();
+        
+        if (mounted) {
+          setARSupported(supported);
+          console.log('Final AR Support:', supported);
+        }
+      } catch (error) {
+        console.error('Error checking AR support:', error);
+        if (mounted) {
+          setARSupported(false);
+        }
+      } finally {
+        if (mounted) {
+          setCheckingAR(false);
+        }
+      }
+    };
+
+    checkSupport();
+    
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -284,11 +352,16 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     setLoading(false);
   }, []);
 
-  const handleEnterAR = () => {
+  const handleEnterAR = async () => {
     if (arSupported) {
-      setIsARMode(true);
-      // Iniciar sesión AR
-      store.enterAR();
+      try {
+        setIsARMode(true);
+        await store.enterAR();
+      } catch (error) {
+        console.error('Error entering AR:', error);
+        setIsARMode(false);
+        alert('No se pudo iniciar el modo AR. Asegúrate de estar usando HTTPS y un dispositivo compatible.');
+      }
     }
   };
 
@@ -302,14 +375,20 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   if (isARMode) {
     return (
       <div className="fixed inset-0 z-50 bg-black">
-        {/* Botón para salir AR */}
-        <button
-          onClick={handleExitAR}
-          className="absolute top-4 right-4 z-10 bg-red-500 hover:bg-red-600 text-white font-poppins px-4 py-2 rounded-md transition-colors duration-200"
-          style={{ pointerEvents: 'auto' }}
-        >
-          Salir AR
-        </button>
+        {/* Botones AR */}
+        <div className="absolute top-4 left-4 right-4 z-10 flex justify-between">
+          <button
+            onClick={handleExitAR}
+            className="bg-red-500 hover:bg-red-600 text-white font-poppins px-4 py-2 rounded-md transition-colors duration-200"
+            style={{ pointerEvents: 'auto' }}
+          >
+            Salir AR
+          </button>
+          
+          <div className="bg-black/50 text-white px-3 py-1 rounded-md text-sm">
+            Modo AR: {itemName}
+          </div>
+        </div>
 
         <Canvas
           style={{ width: '100%', height: '100%' }}
@@ -317,22 +396,23 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
           gl={{ 
             preserveDrawingBuffer: true,
             alpha: true,
-            antialias: true
+            antialias: true,
+            powerPreference: "high-performance"
           }}
         >
           <XR store={store}>
             {/* Luces optimizadas para AR */}
-            <ambientLight intensity={0.8} />
+            <ambientLight intensity={0.6} />
             <directionalLight 
-              position={[5, 5, 5]} 
-              intensity={1.5}
+              position={[2, 2, 2]} 
+              intensity={1}
               castShadow
               shadow-mapSize={[1024, 1024]}
             />
             
-            <Environment preset="park" />
+            <Environment preset="apartment" />
             
-            {/* Modelo AR con hit testing real */}
+            {/* Modelo AR */}
             <ARModel 
               modelPath={modelPath}
               onPlaced={(model) => console.log('Model placed:', model)}
@@ -447,11 +527,14 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
           <div className="flex justify-between items-center">
             <div className="text-sm font-poppins text-neutral-600">
               <p>💡 <strong>Tip:</strong> Arrastra para rotar, rueda del mouse para zoom</p>
-              {!arSupported && (
-                <p className="text-orange-600 mt-1">⚠️ AR no disponible en este dispositivo</p>
+              {checkingAR && (
+                <p className="text-blue-600 mt-1">🔍 Verificando soporte AR...</p>
               )}
-              {arSupported && (
-                <p className="text-green-600 mt-1">✅ AR disponible</p>
+              {!checkingAR && !arSupported && (
+                <p className="text-orange-600 mt-1">⚠️ AR requiere dispositivo móvil con HTTPS</p>
+              )}
+              {!checkingAR && arSupported && (
+                <p className="text-green-600 mt-1">✅ AR disponible - Requiere HTTPS</p>
               )}
             </div>
             <div className="flex gap-3">
@@ -463,15 +546,21 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
               </button>
               <button
                 className={`font-poppins px-4 py-2 rounded-md transition-colors duration-200 ${
-                  arSupported 
+                  arSupported && !checkingAR
                     ? 'bg-primary-500 hover:bg-primary-600 text-white' 
                     : 'bg-neutral-300 text-neutral-500 cursor-not-allowed'
                 }`}
                 onClick={handleEnterAR}
-                disabled={!arSupported}
-                title={!arSupported ? 'AR no soportado en este dispositivo' : 'Activar modo AR'}
+                disabled={!arSupported || checkingAR}
+                title={
+                  checkingAR 
+                    ? 'Verificando soporte AR...' 
+                    : !arSupported 
+                      ? 'AR requiere dispositivo móvil con HTTPS' 
+                      : 'Activar modo AR'
+                }
               >
-                🥽 Modo AR Real
+                🥽 {checkingAR ? 'Verificando...' : 'Modo AR'}
               </button>
             </div>
           </div>
