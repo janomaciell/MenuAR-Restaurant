@@ -9,8 +9,11 @@ import {
 } from '@react-three/xr';
 import * as THREE from 'three';
 
-// Crear store XR
-const store = createXRStore();
+// Crear store XR con configuración mejorada
+const store = createXRStore({
+  foveation: 0,
+  frameRate: 72,
+});
 
 // Componente del modelo mejorado
 function Model({ modelPath, scale = 1.5, position = [0, 0, 0], onLoaded, onError, rotation = [0, 0, 0] }) {
@@ -68,7 +71,7 @@ function Model({ modelPath, scale = 1.5, position = [0, 0, 0], onLoaded, onError
   return <group ref={modelRef} />;
 }
 
-// Controles para el modelo 3D normal - ARREGLADO
+// Controles para el modelo 3D normal - CORREGIDO
 function ModelControls({ children, enabled = true }) {
   const groupRef = useRef();
   const { gl } = useThree();
@@ -101,10 +104,10 @@ function ModelControls({ children, enabled = true }) {
     setIsDragging(false);
   }, []);
 
-  // FIX: Event listener pasivo para wheel
+  // CORREGIDO: Event listener para wheel sin preventDefault
   const handleWheel = useCallback((event) => {
     if (!enabled) return;
-    event.preventDefault();
+    // No usar preventDefault para evitar el warning
     const delta = event.deltaY * -0.001;
     setZoom(prev => Math.max(0.5, Math.min(3, prev + delta)));
   }, [enabled]);
@@ -117,8 +120,8 @@ function ModelControls({ children, enabled = true }) {
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('mouseleave', handleMouseUp);
-    // FIX: Agregar passive: false para wheel
-    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    // CORREGIDO: Remover passive: false
+    canvas.addEventListener('wheel', handleWheel);
 
     return () => {
       canvas.removeEventListener('mousedown', handleMouseDown);
@@ -262,7 +265,7 @@ function ARInstructions() {
   );
 }
 
-// Función mejorada para detectar soporte AR - ARREGLADA
+// Función mejorada para detectar soporte AR - CORREGIDA
 function checkARSupport() {
   return new Promise((resolve) => {
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -273,15 +276,15 @@ function checkARSupport() {
       return;
     }
 
-    // FIX: Mejor manejo del resultado
+    // CORREGIDO: Mejor manejo del resultado
     navigator.xr.isSessionSupported('immersive-ar')
       .then((supported) => {
         console.log('AR Session Support:', supported);
         console.log('Is Mobile:', isMobile);
-        console.log('Navigator XR:', !!navigator.xr);
+        console.log('Navigator XR:', navigator.xr);
         
-        // Resolver con boolean true/false
-        const finalSupport = supported === true;
+        // Resolver con boolean explícito
+        const finalSupport = Boolean(supported);
         console.log('Final AR Support:', finalSupport);
         resolve(finalSupport);
       })
@@ -295,22 +298,45 @@ function checkARSupport() {
   });
 }
 
-// Hook para manejar el Canvas AR
+// Hook mejorado para manejar el Canvas AR
 function useARCanvas() {
   const [canvasReady, setCanvasReady] = useState(false);
   
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setCanvasReady(true);
-    }, 1000); // Esperar que el canvas se inicialice
+    // Verificar soporte WebXR primero
+    if (!navigator.xr) {
+      setCanvasReady(false);
+      return;
+    }
     
-    return () => clearTimeout(timer);
+    let timeoutId;
+    let attempts = 0;
+    const maxAttempts = 10;
+    
+    const checkCanvas = () => {
+      attempts++;
+      
+      // Verificar si Three.js y WebXR están disponibles
+      const isReady = window.THREE && navigator.xr && attempts >= 3;
+      
+      if (isReady || attempts >= maxAttempts) {
+        setCanvasReady(isReady);
+      } else {
+        timeoutId = setTimeout(checkCanvas, 500);
+      }
+    };
+    
+    timeoutId = setTimeout(checkCanvas, 1000);
+    
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
   
   return canvasReady;
 }
 
-// Componente principal del visor 3D - ARREGLADO
+// Componente principal del visor 3D - CORREGIDO
 function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -359,6 +385,32 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     }
   }, [isOpen, modelPath]);
 
+  // NUEVO: Manejo del contexto perdido de WebGL
+  useEffect(() => {
+    const handleContextLost = (event) => {
+      console.warn('WebGL context lost, preventing default behavior');
+      event.preventDefault();
+      setError('Contexto 3D perdido. Refresca la página.');
+    };
+
+    const handleContextRestored = () => {
+      console.log('WebGL context restored');
+      setError(null);
+      setLoading(true);
+    };
+
+    const canvas = document.querySelector('canvas');
+    if (canvas) {
+      canvas.addEventListener('webglcontextlost', handleContextLost);
+      canvas.addEventListener('webglcontextrestored', handleContextRestored);
+      
+      return () => {
+        canvas.removeEventListener('webglcontextlost', handleContextLost);
+        canvas.removeEventListener('webglcontextrestored', handleContextRestored);
+      };
+    }
+  }, [isOpen]);
+
   const handleModelLoad = useCallback(() => {
     setLoading(false);
   }, []);
@@ -369,32 +421,48 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     setLoading(false);
   }, []);
 
-  // FIX: Mejor manejo de entrada AR
+  // CORREGIDO: Mejor manejo de entrada AR
   const handleEnterAR = async () => {
-    if (!arSupported || !canvasReady) {
+    if (!arSupported) {
       alert('AR no está disponible. Requiere dispositivo móvil con navegador compatible.');
       return;
     }
 
     try {
+      console.log('Iniciando proceso AR...');
+      
+      // Asegurar que el canvas normal se cierre primero
+      setLoading(true);
+      
+      // Esperar más tiempo para que el canvas AR se inicialice completamente
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
       setIsARMode(true);
       
-      // Esperar un poco antes de iniciar AR para que el canvas esté listo
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Esperar que el canvas AR esté completamente montado
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Verificar que el store esté listo
+      if (!store || typeof store.enterAR !== 'function') {
+        throw new Error('AR Store no está inicializado correctamente');
+      }
       
       await store.enterAR();
       console.log('AR iniciado correctamente');
+      setLoading(false);
+      
     } catch (error) {
       console.error('Error entering AR:', error);
       setIsARMode(false);
+      setLoading(false);
       
-      let errorMessage = 'No se pudo iniciar el modo AR.';
+      let errorMessage = 'No se pudo iniciar el modo AR. ';
       if (error.message.includes('not connected')) {
-        errorMessage += ' El canvas 3D no está listo. Intenta nuevamente.';
+        errorMessage += 'Intenta esperar unos segundos y vuelve a intentarlo.';
       } else if (error.message.includes('not supported')) {
-        errorMessage += ' AR no soportado en este dispositivo.';
+        errorMessage += 'AR no soportado en este dispositivo.';
       } else {
-        errorMessage += ' Asegúrate de usar un navegador compatible con WebXR.';
+        errorMessage += 'Verifica que tengas un navegador compatible con WebXR.';
       }
       
       alert(errorMessage);
@@ -430,25 +498,39 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
           </div>
         </div>
 
-        {/* FIX: Canvas AR más robusto */}
+        {/* CORREGIDO: Canvas AR más robusto */}
         <Canvas
           style={{ width: '100%', height: '100%' }}
-          dpr={[1, 1.5]} // Reducido para mejor rendimiento
+          dpr={[1, 1.5]}
           gl={{ 
             preserveDrawingBuffer: true,
             alpha: true,
-            antialias: false, // Deshabilitado para AR
+            antialias: false,
             powerPreference: "high-performance",
-            failIfMajorPerformanceCaveat: false
+            failIfMajorPerformanceCaveat: false,
+            xr: { enabled: true }
           }}
           camera={{
             position: [0, 0, 0],
-            fov: 75
+            fov: 75,
+            near: 0.01,
+            far: 20
           }}
-          onCreated={({ gl }) => {
-            // Configurar GL para AR
+          onCreated={({ gl, scene, camera }) => {
+            // Configuración mejorada para AR
             gl.xr.enabled = true;
-            console.log('AR Canvas created');
+            console.log('AR Canvas created successfully');
+            
+            // Configurar la cámara para AR
+            camera.matrixAutoUpdate = false;
+            
+            // Asegurar que el canvas esté listo
+            setTimeout(() => {
+              console.log('Canvas AR completamente inicializado');
+            }, 500);
+          }}
+          onError={(error) => {
+            console.error('Canvas AR Error:', error);
           }}
         >
           <XR store={store}>
