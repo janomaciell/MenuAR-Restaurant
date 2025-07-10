@@ -271,42 +271,35 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   if (!isOpen) return null;
 
   return showARView ? (
-    <div className="fixed inset-0 z-50 bg-black">
-      {/* Video de cámara */}
+    <div className="fixed inset-0 z-50">
+      {/* 📷 VIDEO DE LA CÁMARA */}
       <video 
         ref={videoRef}
-        className="absolute inset-0 w-full h-full object-cover"
+        className="absolute inset-0 w-full h-full object-cover z-0"
         playsInline
         muted
         autoPlay
-        style={{ transform: 'scaleX(-1)' }}
       />
-      
-      {/* Canvas 3D */}
-      <div className="absolute inset-0 w-full h-full">
+
+      {/* 🎨 CANVAS DE THREE.JS */}
+      <div className="absolute inset-0 w-full h-full z-10">
         <Canvas
           camera={{ 
             position: [0, 0, 2], 
             fov: 75, 
             near: 0.1, 
-            far: 100
+            far: 100 
           }}
           gl={{ 
-            alpha: true, 
+            alpha: true,              // ✅ fondo transparente
             antialias: true,
             powerPreference: 'high-performance'
           }}
         >
-          {/* Iluminación */}
           <ambientLight intensity={0.8} />
-          <directionalLight 
-            position={[5, 5, 5]} 
-            intensity={1} 
-            castShadow
-          />
+          <directionalLight position={[5, 5, 5]} intensity={1} castShadow />
           <pointLight position={[-5, 5, 5]} intensity={0.5} />
           
-          {/* Modelo 3D */}
           {modelPreloaded && (
             <ARModel3D
               modelPath={modelPath}
@@ -318,14 +311,11 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
             />
           )}
 
-          
-          {/* Detector de planos */}
           <ARPlaneDetector 
             onPlaneDetected={handlePlaneDetected}
             isActive={arActive}
           />
-          
-          {/* Indicador de carga */}
+
           {!modelLoaded && (
             <Html center>
               <div className="bg-black/80 text-white px-6 py-4 rounded-xl backdrop-blur-sm">
@@ -341,9 +331,9 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
           )}
         </Canvas>
       </div>
-      
-      {/* Controles superiores */}
-      <div className="absolute top-4 left-4 right-4 z-10 flex justify-between items-center">
+
+      {/* 🔝 UI Superior */}
+      <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-center">
         <button
           onClick={() => {
             stopCamera();
@@ -353,35 +343,34 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
         >
           ← Salir AR
         </button>
-        
+
         <div className="bg-black/70 text-white px-4 py-2 rounded-lg backdrop-blur-sm">
           <span className="text-sm">📱 {itemName}</span>
         </div>
       </div>
-      
-      {/* Instrucciones */}
-      <div className="absolute bottom-4 left-4 right-4 z-10">
-        <div className="bg-black/80 text-white p-4 rounded-xl backdrop-blur-sm">
-          <h3 className="font-semibold mb-2 text-center">
+
+      {/* 🧾 Instrucciones AR */}
+      <div className="absolute bottom-4 left-4 right-4 z-20">
+        <div className="bg-black/80 text-white p-4 rounded-xl backdrop-blur-sm text-center">
+          <h3 className="font-semibold mb-2">
             {modelPlaced ? '✅ Plato colocado en la mesa' : '🎯 Coloca el plato'}
           </h3>
-          
           {!modelPlaced ? (
-            <div className="text-sm space-y-1 text-center">
+            <div className="text-sm space-y-1">
               <p>• Apunta la cámara hacia tu mesa</p>
               <p>• Toca la pantalla donde quieres el plato</p>
               <p>• El modelo aparecerá en tamaño real</p>
             </div>
           ) : (
-            <div className="text-sm text-center">
-              <p className="text-green-400">¡Perfecto! Ahora puedes ver el plato en tu mesa</p>
+            <div className="text-sm text-green-400">
+              <p>¡Perfecto! Ahora puedes ver el plato en tu mesa</p>
               <p className="text-xs mt-1">Muévete para verlo desde diferentes ángulos</p>
             </div>
           )}
         </div>
       </div>
-      
-      {/* Modal de error */}
+
+      {/* 🧯 Modal de Error */}
       {error && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-60 p-4">
           <div className="bg-white rounded-xl p-6 max-w-sm w-full text-center shadow-2xl">
@@ -409,6 +398,7 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
         </div>
       )}
     </div>
+
   ) : (
     // Vista previa normal
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
