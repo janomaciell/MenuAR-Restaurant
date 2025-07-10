@@ -98,6 +98,76 @@ function ARModel3D({ modelPath, scale = 0.5, position = [0, 0, 0], rotation = [0
   return <group ref={modelRef} />;
 }
 
+// Simulación básica de detección de plano AR
+function ARPlaneDetector({ onPlaneDetected }) {
+  const { camera, raycaster } = useThree();
+  const [detectedPlanes, setDetectedPlanes] = useState([]);
+
+  useFrame(() => {
+    // Simulación: detecta un plano fijo delante de la cámara
+    const intersectionPoint = new THREE.Vector3(0, -0.5, -1);
+    if (onPlaneDetected) {
+      onPlaneDetected(intersectionPoint);
+    }
+  });
+
+  return null;
+}
+
+// Componente AR mejorado
+function EnhancedARModel({ modelPath, scale = 0.3, onTablePosition }) {
+  const modelRef = useRef();
+  const { scene } = useGLTF(modelPath);
+  const { camera } = useThree();
+  const [isPlaced, setIsPlaced] = useState(false);
+  const [tableHeight, setTableHeight] = useState(-0.5);
+
+  useFrame((state) => {
+    if (modelRef.current && isPlaced) {
+      // Animación sutil para que se vea más real
+      modelRef.current.rotation.y += 0.002;
+      modelRef.current.position.y = tableHeight + Math.sin(state.clock.elapsedTime) * 0.01;
+    }
+  });
+
+  // Detectar toque en pantalla para colocar el plato
+  const handlePlacement = (event) => {
+    const rect = event.target.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    
+    // Convertir coordenadas de pantalla a mundo 3D
+    const vector = new THREE.Vector3(x, y, 0.5);
+    vector.unproject(camera);
+    
+    if (modelRef.current) {
+      modelRef.current.position.set(vector.x, tableHeight, vector.z);
+      setIsPlaced(true);
+      if (onTablePosition) onTablePosition([vector.x, tableHeight, vector.z]);
+    }
+  };
+
+  return (
+    <group ref={modelRef} onClick={handlePlacement}>
+      {scene && <primitive object={scene} scale={scale} />}
+    </group>
+  );
+}
+
+// Función para calcular el tamaño apropiado del plato
+function calculatePlateScale(dishType) {
+  const plateScales = {
+    'hamburguesas': 0.25,
+    'pizzas': 0.3,
+    'pastas': 0.2,
+    'sandwiches': 0.2,
+    'postres': 0.15,
+    'bebidas': 0.18
+  };
+  
+  return plateScales[dishType] || 0.2;
+}
+
 // Componente principal corregido
 function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [arActive, setArActive] = useState(false);
@@ -125,67 +195,42 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   }, []);
 
   // Inicializar cámara con mejor manejo de errores
-  const initCamera = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
+const initCamera = useCallback(async () => {
+  try {
+    setLoading(true);
+    setError(null);
+    checkCameraSupport();
 
-      console.log('🚀 Iniciando AR...');
-      checkCameraSupport();
-
-      if (!modelPreloaded) {
-        throw new Error('El modelo 3D aún se está cargando');
-      }
-
-      const constraints = {
-        video: {
-          facingMode: 'environment',
-          width: { ideal: 1280, max: 1920 },
-          height: { ideal: 720, max: 1080 },
-          frameRate: { ideal: 30, max: 60 }
-        },
-        audio: false
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      setCameraStream(stream);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-
-        await new Promise((resolve, reject) => {
-          const video = videoRef.current;
-          video.onloadedmetadata = () => {
-            video.play().then(resolve).catch(reject);
-          };
-          video.onerror = reject;
-          setTimeout(() => reject(new Error('Timeout cargando video')), 10000);
-        });
-      }
-
-      console.log('✅ AR activado correctamente');
-      setArActive(true);
-      setShowARView(true); // NUEVO
-      setLoading(false);
-    } catch (err) {
-      console.error('❌ Error iniciando AR:', err);
-
-      let errorMessage = 'Error desconocido';
-
-      if (err.name === 'NotAllowedError') {
-        errorMessage = 'Permisos de cámara denegados. Por favor, permite el acceso a la cámara.';
-      } else if (err.name === 'NotFoundError') {
-        errorMessage = 'No se encontró cámara en el dispositivo.';
-      } else if (err.name === 'NotSupportedError') {
-        errorMessage = 'Tu navegador no soporta esta funcionalidad.';
-      } else {
-        errorMessage = err.message;
-      }
-
-      setError(errorMessage);
-      setLoading(false);
+    if (!modelPreloaded) {
+      throw new Error('El modelo 3D aún se está cargando');
     }
-  }, [checkCameraSupport, modelPreloaded]);
+
+    const constraints = {
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1280, max: 1920 },
+        height: { ideal: 720, max: 1080 },
+        frameRate: { ideal: 30, max: 60 }
+      },
+      audio: false
+    };
+
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    setCameraStream(stream);
+    videoRef.current.srcObject = stream;
+
+    await videoRef.current.play();
+    setArActive(true);
+    setShowARView(true);
+  } catch (err) {
+    console.error('Error iniciando AR:', err);
+    setError(err.message || 'Error desconocido');
+  } finally {
+    setLoading(false);
+  }
+}, [checkCameraSupport, modelPreloaded]);
+
+
 
   const handleCloseARView = () => {
     stopCamera();
@@ -300,6 +345,10 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
                 </div>
               </Html>
             )}
+
+            <ARPlaneDetector onPlaneDetected={(point) => {
+              console.log('Plano AR detectado en:', point);
+            }} />
           </Canvas>
         </div>
 
@@ -366,13 +415,7 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
               <directionalLight position={[10, 10, 5]} intensity={1.2} castShadow />
               <pointLight position={[-10, -10, -5]} intensity={0.3} />
 
-              <ARModel3D
-                modelPath={modelPath}
-                scale={1.5}
-                position={[0, 0, 0]}
-                onLoad={handleModelLoad}
-                onError={handleModelError}
-              />
+              <EnhancedARModel modelPath={modelPath} scale={0.3} />
 
               <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.5, 0]} receiveShadow>
                 <planeGeometry args={[20, 20]} />

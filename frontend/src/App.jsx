@@ -97,11 +97,6 @@ function App() {
               >
                 Explorar Menú
               </button>
-              <button 
-                className="border border-primary-500 text-primary-500 hover:bg-primary-50 font-poppins font-medium px-8 py-3 rounded-md transition-all duration-300 hover-lift"
-              >
-                Hacer Reservación
-              </button>
             </div>
           </div>
         </section>
