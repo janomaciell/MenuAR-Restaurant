@@ -60,15 +60,29 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+
+        // Esperar a que se cargue el metadata
         await new Promise((resolve, reject) => {
           videoRef.current.onloadedmetadata = () => {
-            videoRef.current.play().then(resolve).catch(reject);
+            videoRef.current.play()
+              .then(() => {
+                // ⚠️ Esperar hasta que el video tenga dimensiones válidas
+                const checkVideoReady = () => {
+                  if (videoRef.current.videoWidth > 0 && videoRef.current.videoHeight > 0) {
+                    resolve();
+                  } else {
+                    requestAnimationFrame(checkVideoReady);
+                  }
+                };
+                checkVideoReady();
+              })
+              .catch(reject);
           };
         });
 
-        // Iniciar tracking de superficie
         startTracking(videoRef.current);
       }
+
 
       setArActive(true);
       setShowARView(true);
