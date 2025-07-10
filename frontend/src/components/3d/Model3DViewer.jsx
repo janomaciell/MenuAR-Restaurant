@@ -3,46 +3,94 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useGLTF, Html } from '@react-three/drei';
 import * as THREE from 'three';
 
-// Precargar el modelo
+// Hook para precargar modelos 3D
 function usePreloadModel(modelPath) {
   const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(null);
-  
+
   useEffect(() => {
     if (modelPath) {
-      // Precargar usando useGLTF.preload
-      useGLTF.preload(modelPath);
-      
-      // Simular carga con timeout (ajusta según tu modelo)
+      useGLTF.preload(modelPath); // ✅ DEBE estar siempre en tope del useEffect
+
       const timer = setTimeout(() => {
         setLoaded(true);
       }, 1000);
-      
+
       return () => clearTimeout(timer);
     }
   }, [modelPath]);
-  
-  return { loaded, error };
+
+  return { loaded };
 }
 
-// Componente del modelo 3D optimizado para AR
-function ARModel3D({ modelPath, scale = 0.5, position = [0, 0, 0], rotation = [0, 0, 0], onLoad, onError }) {
-  const { scene, error } = useGLTF(modelPath);
+
+// Detector de planos mejorado
+function ARPlaneDetector({ onPlaneDetected, isActive }) {
+  const { gl, camera } = useThree();
+  const raycaster = useRef(new THREE.Raycaster());
+  const mouse = useRef(new THREE.Vector2());
+  const [hasDetected, setHasDetected] = useState(false);
+
+  const handleTouch = useCallback((event) => {
+    if (!isActive) return;
+    
+    const rect = gl.domElement.getBoundingClientRect();
+    mouse.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.current.setFromCamera(mouse.current, camera);
+    
+    // Crear un plano invisible para detectar toques (simula la mesa)
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0.5);
+    const intersection = new THREE.Vector3();
+    
+    if (raycaster.current.ray.intersectPlane(plane, intersection)) {
+      intersection.y = -0.5; // Altura fija de la mesa
+      onPlaneDetected(intersection);
+      setHasDetected(true);
+    }
+  }, [camera, gl, isActive, onPlaneDetected]);
+
+  useEffect(() => {
+    if (isActive && gl.domElement) {
+      gl.domElement.addEventListener('click', handleTouch);
+      gl.domElement.addEventListener('touchend', handleTouch);
+      
+      return () => {
+        gl.domElement.removeEventListener('click', handleTouch);
+        gl.domElement.removeEventListener('touchend', handleTouch);
+      };
+    }
+  }, [gl, handleTouch, isActive]);
+
+  return null;
+}
+
+// Modelo AR mejorado
+function ARModel3D({ 
+  modelPath, 
+  scale = 0.3, 
+  position = [0, -0.5, -1], 
+  onLoad, 
+  onError,
+  isPlaced = false 
+}) {
+  const { scene, error } = useGLTF(modelPath, true);
+
   const modelRef = useRef();
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
     if (scene && !error && !isReady) {
       try {
-        const clonedScene = scene.clone(true);
+        const cloned = scene.clone(true);
         
         // Centrar el modelo
-        const box = new THREE.Box3().setFromObject(clonedScene);
+        const box = new THREE.Box3().setFromObject(cloned);
         const center = box.getCenter(new THREE.Vector3());
-        clonedScene.position.sub(center);
+        cloned.position.sub(center);
         
-        // Optimizar para AR móvil
-        clonedScene.traverse((child) => {
+        // Optimizar el modelo
+        cloned.traverse((child) => {
           if (child.isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
@@ -51,434 +99,308 @@ function ARModel3D({ modelPath, scale = 0.5, position = [0, 0, 0], rotation = [0
             if (child.material) {
               child.material = child.material.clone();
               child.material.needsUpdate = true;
+              
+              // Optimizar texturas
               if (child.material.map) {
                 child.material.map.minFilter = THREE.LinearFilter;
                 child.material.map.magFilter = THREE.LinearFilter;
+                child.material.map.generateMipmaps = false;
               }
             }
           }
         });
-
+        
         if (modelRef.current) {
-          while (modelRef.current.children.length > 0) {
+          while (modelRef.current.children.length) {
             modelRef.current.remove(modelRef.current.children[0]);
           }
-          
-          modelRef.current.add(clonedScene);
+
+          modelRef.current.add(cloned);
           modelRef.current.scale.set(scale, scale, scale);
           modelRef.current.position.set(...position);
-          modelRef.current.rotation.set(...rotation);
+          setIsReady(true);
+          if (onLoad) onLoad(); // ✅ Llamalo apenas está listo
         }
-
-        setIsReady(true);
-        // Notificar que el modelo está listo
-        if (onLoad) onLoad();
         
-      } catch (err) {
-        console.error('Error processing AR model:', err);
-        if (onError) onError(err);
+        setIsReady(true);
+        if (onLoad) onLoad();
+      } catch (e) {
+        console.error('Error cargando modelo:', e);
+        if (onError) onError(e);
       }
     }
-  }, [scene, error, scale, position, rotation, isReady, onLoad, onError]);
-
-  // Manejar errores de carga
-  useEffect(() => {
-    if (error && onError) {
-      onError(error);
-    }
-  }, [error, onError]);
+  }, [scene, error, scale, position, isReady, onLoad, onError]);
 
   useFrame((state) => {
-    if (modelRef.current && isReady) {
-      modelRef.current.rotation.y += 0.005;
-      modelRef.current.position.y = position[1] + Math.sin(state.clock.elapsedTime) * 0.02;
+    if (modelRef.current && isReady && isPlaced) {
+      // Rotación suave
+      modelRef.current.rotation.y += 0.003;
+      
+      // Animación flotante muy sutil
+      const baseY = position[1];
+      modelRef.current.position.y = baseY + Math.sin(state.clock.elapsedTime * 2) * 0.008;
     }
   });
-
-  return <group ref={modelRef} />;
-}
-
-// Simulación básica de detección de plano AR
-function ARPlaneDetector({ onPlaneDetected }) {
-  const { camera, raycaster } = useThree();
-  const [detectedPlanes, setDetectedPlanes] = useState([]);
-
-  useFrame(() => {
-    // Simulación: detecta un plano fijo delante de la cámara
-    const intersectionPoint = new THREE.Vector3(0, -0.5, -1);
-    if (onPlaneDetected) {
-      onPlaneDetected(intersectionPoint);
-    }
-  });
-
-  return null;
-}
-
-// Componente AR mejorado
-function EnhancedARModel({ modelPath, scale = 0.3, onTablePosition }) {
-  const modelRef = useRef();
-  const { scene } = useGLTF(modelPath);
-  const { camera } = useThree();
-  const [isPlaced, setIsPlaced] = useState(false);
-  const [tableHeight, setTableHeight] = useState(-0.5);
-
-  useFrame((state) => {
-    if (modelRef.current && isPlaced) {
-      // Animación sutil para que se vea más real
-      modelRef.current.rotation.y += 0.002;
-      modelRef.current.position.y = tableHeight + Math.sin(state.clock.elapsedTime) * 0.01;
-    }
-  });
-
-  // Detectar toque en pantalla para colocar el plato
-  const handlePlacement = (event) => {
-    const rect = event.target.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    
-    // Convertir coordenadas de pantalla a mundo 3D
-    const vector = new THREE.Vector3(x, y, 0.5);
-    vector.unproject(camera);
-    
-    if (modelRef.current) {
-      modelRef.current.position.set(vector.x, tableHeight, vector.z);
-      setIsPlaced(true);
-      if (onTablePosition) onTablePosition([vector.x, tableHeight, vector.z]);
-    }
-  };
 
   return (
-    <group ref={modelRef} onClick={handlePlacement}>
-      {scene && <primitive object={scene} scale={scale} />}
+    <group ref={modelRef}>
+      {/* Sombra circular debajo del modelo */}
+      {isReady && (
+        <mesh position={[0, -0.01, 0]} rotation={[-Math.PI/2, 0, 0]}>
+          <circleGeometry args={[scale * 0.6, 32]} />
+          <meshLambertMaterial 
+            color="#000000" 
+            transparent 
+            opacity={0.2} 
+            depthWrite={false}
+          />
+        </mesh>
+      )}
     </group>
   );
 }
 
-// Función para calcular el tamaño apropiado del plato
-function calculatePlateScale(dishType) {
-  const plateScales = {
-    'hamburguesas': 0.25,
-    'pizzas': 0.3,
-    'pastas': 0.2,
-    'sandwiches': 0.2,
-    'postres': 0.15,
-    'bebidas': 0.18
-  };
-  
-  return plateScales[dishType] || 0.2;
-}
-
-// Componente principal corregido
+// Componente principal
 function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [arActive, setArActive] = useState(false);
-  const [showARView, setShowARView] = useState(false); // NUEVO
+  const [showARView, setShowARView] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [cameraStream, setCameraStream] = useState(null);
   const [modelLoaded, setModelLoaded] = useState(false);
+  const [modelPosition, setModelPosition] = useState([0, -0.5, -1]);
+  const [modelPlaced, setModelPlaced] = useState(false);
   const videoRef = useRef();
-  const canvasRef = useRef();
   
-  // Precargar modelo
-  const { loaded: modelPreloaded } = usePreloadModel(modelPath);
+  // Precargar el modelo
+  const { loaded: modelPreloaded, error: preloadError } = usePreloadModel(modelPath);
 
-  // Verificar compatibilidad de cámara
-  const checkCameraSupport = useCallback(() => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      throw new Error('Tu navegador no soporta acceso a la cámara');
+  // Inicializar cámara
+  const initCamera = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Tu navegador no soporta acceso a la cámara');
+      }
+      
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+        throw new Error('La funcionalidad AR requiere conexión HTTPS');
+      }
+      
+      const constraints = {
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },
+          frameRate: { ideal: 30, min: 20 }
+        },
+        audio: false
+      };
+      console.log('Solicitando acceso a la cámara con:', constraints);
+      navigator.permissions?.query({ name: 'camera' }).then((result) => {
+        console.log('Estado del permiso de cámara:', result.state);
+      });
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setCameraStream(stream);
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current.play();
+        };
+      }
+      
+      setArActive(true);
+      setModelPlaced(false);
+      
+    } catch (err) {
+      console.error('Error iniciando cámara:', err);
+      setError(err.message || 'Error al acceder a la cámara');
+    } finally {
+      setLoading(false);
     }
-    
-    // Verificar HTTPS en producción
-    if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-      throw new Error('AR requiere conexión HTTPS segura');
-    }
-  }, []);
-
-  // Inicializar cámara con mejor manejo de errores
-const initCamera = useCallback(async () => {
-  try {
-    setLoading(true);
-    setError(null);
-    checkCameraSupport();
-
-    if (!modelPreloaded) {
-      throw new Error('El modelo 3D aún se está cargando');
-    }
-
-    const constraints = {
-      video: {
-        facingMode: 'environment',
-        width: { ideal: 1280, max: 1920 },
-        height: { ideal: 720, max: 1080 },
-        frameRate: { ideal: 30, max: 60 }
-      },
-      audio: false
-    };
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    setCameraStream(stream);
-    videoRef.current.srcObject = stream;
-
-    await videoRef.current.play();
-    setArActive(true);
-    setShowARView(true);
-  } catch (err) {
-    console.error('Error iniciando AR:', err);
-    setError(err.message || 'Error desconocido');
-  } finally {
-    setLoading(false);
-  }
-}, [checkCameraSupport, modelPreloaded]);
-
-
-
-  const handleCloseARView = () => {
-    stopCamera();
-    setShowARView(false);
-  };
-
-  // Callbacks para el modelo
-  const handleModelLoad = useCallback(() => {
-    console.log('✅ Modelo 3D cargado en AR');
-    setModelLoaded(true);
-  }, []);
-
-  const handleModelError = useCallback((err) => {
-    console.error('❌ Error cargando modelo 3D:', err);
-    setError('No se pudo cargar el modelo 3D');
   }, []);
 
   // Detener cámara
   const stopCamera = useCallback(() => {
-    console.log('🛑 Deteniendo cámara AR');
     if (cameraStream) {
-      cameraStream.getTracks().forEach(track => {
-        track.stop();
-        console.log(`Track ${track.kind} detenido`);
-      });
+      cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
     }
     setArActive(false);
     setModelLoaded(false);
+    setModelPlaced(false);
   }, [cameraStream]);
 
-  // Limpiar al desmontar
+  // Manejar detección de plano
+  const handlePlaneDetected = useCallback((position) => {
+    console.log('Superficie detectada en:', position);
+    setModelPosition([position.x, position.y, position.z]);
+    setModelPlaced(true);
+  }, []);
+
+  // Manejar carga del modelo
+  const handleModelLoad = useCallback(() => {
+    console.log('Modelo 3D cargado correctamente');
+    setModelLoaded(true);
+  }, []);
+
+  // Manejar error del modelo
+  const handleModelError = useCallback((err) => {
+    console.error('Error cargando modelo 3D:', err);
+    setError('No se pudo cargar el modelo 3D');
+  }, []);
+
+  // Limpiar recursos al desmontar
   useEffect(() => {
     return () => {
       stopCamera();
     };
   }, [stopCamera]);
 
-  // Debug del estado
+  // Manejar errores de precarga
   useEffect(() => {
-    console.log('📊 Estado actual:', {
-      isOpen,
-      arActive,
-      loading,
-      modelLoaded,
-      modelPreloaded,
-      hasError: !!error,
-      hasCameraStream: !!cameraStream
-    });
-  }, [isOpen, arActive, loading, modelLoaded, modelPreloaded, error, cameraStream]);
+    if (preloadError) {
+      setError('Error cargando el modelo 3D');
+    }
+  }, [preloadError]);
 
   if (!isOpen) return null;
 
-  // Vista AR
-  if (showARView) {
-    return (
-      <div className="fixed inset-0 z-50 bg-black">
-        <video
-          ref={videoRef}
-          className="absolute inset-0 w-full h-full object-cover"
-          playsInline
-          muted
-          autoPlay
-          style={{ transform: 'scaleX(-1)' }}
-        />
-
-        <div className="absolute inset-0 w-full h-full">
-          <Canvas
-            ref={canvasRef}
-            style={{ width: '100%', height: '100%', background: 'transparent' }}
-            camera={{ position: [0, 0, 2], fov: 75, near: 0.1, far: 1000 }}
-            gl={{
-              alpha: true,
-              preserveDrawingBuffer: true,
-              antialias: false,
-              powerPreference: 'high-performance'
-            }}
-          >
-            <ambientLight intensity={0.6} />
-            <directionalLight 
-              position={[2, 2, 2]} 
-              intensity={0.8}
-              castShadow
-              shadow-mapSize={[1024, 1024]}
-            />
-            <pointLight position={[0, 2, 0]} intensity={0.4} />
-
+  return showARView ? (
+    <div className="fixed inset-0 z-50 bg-black">
+      {/* Video de cámara */}
+      <video 
+        ref={videoRef}
+        className="absolute inset-0 w-full h-full object-cover"
+        playsInline
+        muted
+        autoPlay
+        style={{ transform: 'scaleX(-1)' }}
+      />
+      
+      {/* Canvas 3D */}
+      <div className="absolute inset-0 w-full h-full">
+        <Canvas
+          camera={{ 
+            position: [0, 0, 2], 
+            fov: 75, 
+            near: 0.1, 
+            far: 100
+          }}
+          gl={{ 
+            alpha: true, 
+            antialias: true,
+            powerPreference: 'high-performance'
+          }}
+        >
+          {/* Iluminación */}
+          <ambientLight intensity={0.8} />
+          <directionalLight 
+            position={[5, 5, 5]} 
+            intensity={1} 
+            castShadow
+          />
+          <pointLight position={[-5, 5, 5]} intensity={0.5} />
+          
+          {/* Modelo 3D */}
+          {modelPreloaded && (
             <ARModel3D
               modelPath={modelPath}
-              scale={0.3}
-              position={[0, -0.2, -0.8]}
-              rotation={[0, 0, 0]}
+              scale={0.25}
+              position={modelPosition}
               onLoad={handleModelLoad}
               onError={handleModelError}
+              isPlaced={modelPlaced}
             />
+          )}
 
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
-              <planeGeometry args={[4, 4]} />
-              <meshLambertMaterial 
-                color="#ffffff" 
-                transparent 
-                opacity={0.1}
-                side={THREE.DoubleSide}
-              />
-            </mesh>
-
-            {!modelLoaded && (
-              <Html center>
-                <div className="bg-black/70 text-white px-4 py-2 rounded-lg">
-                  <div className="animate-spin w-6 h-6 border-2 border-white border-t-transparent rounded-full mx-auto mb-2"></div>
-                  <p className="text-sm">Cargando modelo...</p>
+          
+          {/* Detector de planos */}
+          <ARPlaneDetector 
+            onPlaneDetected={handlePlaneDetected}
+            isActive={arActive}
+          />
+          
+          {/* Indicador de carga */}
+          {!modelLoaded && (
+            <Html center>
+              <div className="bg-black/80 text-white px-6 py-4 rounded-xl backdrop-blur-sm">
+                <div className="flex items-center space-x-3">
+                  <div className="animate-spin w-6 h-6 border-2 border-white border-t-transparent rounded-full"></div>
+                  <div>
+                    <p className="font-medium">Cargando modelo 3D...</p>
+                    <p className="text-sm text-gray-300">Espera un momento</p>
+                  </div>
                 </div>
-              </Html>
-            )}
-
-            <ARPlaneDetector onPlaneDetected={(point) => {
-              console.log('Plano AR detectado en:', point);
-            }} />
-          </Canvas>
-        </div>
-
-        {/* Controles */}
-        <div className="absolute top-4 left-4 right-4 z-10">
-          <div className="flex justify-between items-center">
-            <button
-              onClick={handleCloseARView}
-              className="bg-red-500/80 hover:bg-red-600/80 text-white font-semibold px-4 py-2 rounded-lg backdrop-blur-sm"
-            >
-              ← Salir AR
-            </button>
-            
-            <div className="bg-black/50 text-white px-3 py-1 rounded-lg text-sm backdrop-blur-sm">
-              📱 AR: {itemName}
-            </div>
-          </div>
-        </div>
-
-        {/* Instrucciones */}
-        <div className="absolute bottom-4 left-4 right-4 z-10">
-          <div className="bg-black/70 text-white p-4 rounded-lg backdrop-blur-sm">
-            <h3 className="font-semibold mb-2">🎯 Instrucciones AR</h3>
-            <ul className="text-sm space-y-1">
-              <li>• Mueve el teléfono lentamente</li>
-              <li>• Apunta a una superficie plana</li>
-              <li>• El modelo aparecerá automáticamente</li>
-            </ul>
-          </div>
+              </div>
+            </Html>
+          )}
+        </Canvas>
+      </div>
+      
+      {/* Controles superiores */}
+      <div className="absolute top-4 left-4 right-4 z-10 flex justify-between items-center">
+        <button
+          onClick={() => {
+            stopCamera();
+            setShowARView(false);
+          }}
+          className="bg-red-500/90 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg"
+        >
+          ← Salir AR
+        </button>
+        
+        <div className="bg-black/70 text-white px-4 py-2 rounded-lg backdrop-blur-sm">
+          <span className="text-sm">📱 {itemName}</span>
         </div>
       </div>
-    );
-  }
-
-  // Vista normal
-  return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-        <div className="flex justify-between items-center p-6 border-b border-neutral-200">
-          <div>
-            <h3 className="text-2xl font-bold text-neutral-950">
-              Vista 3D: {itemName}
-            </h3>
-            <p className="text-sm text-neutral-600 mt-1">
-              Visualiza el plato en realidad aumentada
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-neutral-500 hover:text-neutral-700 text-2xl font-bold w-8 h-8 flex items-center justify-center rounded-full hover:bg-neutral-100"
-          >
-            ×
-          </button>
-        </div>
-
-        <div className="relative h-96 md:h-[500px] bg-gradient-to-br from-neutral-50 to-neutral-100">
-          <div className="w-full h-full">
-            <Canvas
-              camera={{ position: [0, 2, 4], fov: 45 }}
-              gl={{ antialias: true, alpha: false }}
-              shadows
-            >
-              <ambientLight intensity={0.5} />
-              <directionalLight position={[10, 10, 5]} intensity={1.2} castShadow />
-              <pointLight position={[-10, -10, -5]} intensity={0.3} />
-
-              <EnhancedARModel modelPath={modelPath} scale={0.3} />
-
-              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -1.5, 0]} receiveShadow>
-                <planeGeometry args={[20, 20]} />
-                <meshLambertMaterial color="#f0f0f0" transparent opacity={0.3} />
-              </mesh>
-            </Canvas>
-          </div>
-        </div>
-
-        <div className="p-6 border-t border-neutral-200 bg-neutral-50">
-          <div className="flex justify-between items-center">
-            <div className="text-sm text-neutral-600">
-              <p>📱 <strong>AR disponible:</strong> Coloca el plato en tu mesa</p>
-              <p className="text-xs mt-1">
-                Modelo: {modelPreloaded ? '✅ Listo' : '⏳ Cargando...'}
-              </p>
+      
+      {/* Instrucciones */}
+      <div className="absolute bottom-4 left-4 right-4 z-10">
+        <div className="bg-black/80 text-white p-4 rounded-xl backdrop-blur-sm">
+          <h3 className="font-semibold mb-2 text-center">
+            {modelPlaced ? '✅ Plato colocado en la mesa' : '🎯 Coloca el plato'}
+          </h3>
+          
+          {!modelPlaced ? (
+            <div className="text-sm space-y-1 text-center">
+              <p>• Apunta la cámara hacia tu mesa</p>
+              <p>• Toca la pantalla donde quieres el plato</p>
+              <p>• El modelo aparecerá en tamaño real</p>
             </div>
-            <div className="flex gap-3">
-              <button
-                onClick={onClose}
-                className="border border-neutral-300 text-neutral-700 hover:bg-neutral-100 px-4 py-2 rounded-md"
-              >
-                Cerrar
-              </button>
-              <button
-                onClick={initCamera}
-                disabled={loading || !modelPreloaded}
-                className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? 'Iniciando...' : !modelPreloaded ? 'Cargando modelo...' : '📱 Abrir AR'}
-              </button>
+          ) : (
+            <div className="text-sm text-center">
+              <p className="text-green-400">¡Perfecto! Ahora puedes ver el plato en tu mesa</p>
+              <p className="text-xs mt-1">Muévete para verlo desde diferentes ángulos</p>
             </div>
-          </div>
+          )}
         </div>
       </div>
-
-      {/* Modal de error mejorado */}
+      
+      {/* Modal de error */}
       {error && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-60">
-          <div className="bg-white p-6 rounded-xl max-w-sm mx-4 text-center">
-            <div className="text-4xl mb-4">❌</div>
-            <h3 className="font-bold text-lg mb-2">Error de AR</h3>
-            <p className="text-neutral-600 mb-4">{error}</p>
-            <div className="text-sm text-neutral-500 mb-4">
-              <p><strong>Soluciones:</strong></p>
-              <p>• Recarga la página</p>  
-              <p>• Verifica permisos de cámara</p>
-              <p>• Usa Chrome o Safari</p>
-              <p>• Asegúrate de usar HTTPS</p>
-            </div>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-60 p-4">
+          <div className="bg-white rounded-xl p-6 max-w-sm w-full text-center shadow-2xl">
+            <div className="text-4xl mb-4">⚠️</div>
+            <h3 className="font-bold text-lg mb-2">Error AR</h3>
+            <p className="text-gray-600 mb-4 text-sm">{error}</p>
             <div className="flex gap-2">
-              <button
+              <button 
                 onClick={() => setError(null)}
-                className="bg-gray-500 text-white px-4 py-2 rounded-lg flex-1"
+                className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg flex-1 transition-colors"
               >
                 Cerrar
               </button>
-              <button
+              <button 
                 onClick={() => {
                   setError(null);
                   initCamera();
                 }}
-                className="bg-blue-500 text-white px-4 py-2 rounded-lg flex-1"
+                className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg flex-1 transition-colors"
               >
                 Reintentar
               </button>
@@ -486,6 +408,92 @@ const initCamera = useCallback(async () => {
           </div>
         </div>
       )}
+    </div>
+  ) : (
+    // Vista previa normal
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+        {/* Header */}
+        <div className="flex justify-between items-center p-6 border-b">
+          <div>
+            <h3 className="text-2xl font-bold text-gray-800">Vista 3D: {itemName}</h3>
+            <p className="text-sm text-gray-600 mt-1">
+              Visualiza el plato en realidad aumentada en tu mesa
+            </p>
+          </div>
+          <button 
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 text-3xl transition-colors"
+          >
+            ×
+          </button>
+        </div>
+        
+        {/* Preview 3D */}
+        <div className="relative h-96 md:h-[500px] bg-gray-50">
+          <Canvas camera={{ position: [0, 2, 4], fov: 45 }} shadows>
+            <ambientLight intensity={0.6} />
+            <directionalLight position={[10, 10, 5]} intensity={1} castShadow />
+            <pointLight position={[-10, -10, -5]} intensity={0.4} />
+            
+            <ARModel3D 
+              modelPath={modelPath} 
+              scale={0.4} 
+              position={[0, -0.5, 0]}
+              isPlaced={true}
+            />
+            
+            {/* Superficie de la mesa */}
+            <mesh rotation={[-Math.PI/2, 0, 0]} position={[0, -1.5, 0]} receiveShadow>
+              <planeGeometry args={[20, 20]} />
+              <meshLambertMaterial color="#f8f9fa" transparent opacity={0.8} />
+            </mesh>
+          </Canvas>
+          
+          {/* Overlay de carga */}
+          {!modelPreloaded && (
+            <div className="absolute inset-0 bg-white/80 flex items-center justify-center">
+              <div className="text-center">
+                <div className="animate-spin w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full mx-auto mb-3"></div>
+                <p className="text-gray-600 font-medium">Cargando modelo 3D...</p>
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Footer */}
+        <div className="p-6 border-t bg-gray-50">
+          <div className="flex justify-between items-center">
+            <div className="text-sm">
+              <p className="font-medium text-gray-800 mb-1">
+                📱 <span className="text-blue-600">AR disponible</span>: Ve el plato en tu mesa real
+              </p>
+              <p className="text-xs text-gray-500">
+                Estado: {modelPreloaded ? '✅ Modelo listo' : '⏳ Cargando modelo...'}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={onClose}
+                className="border border-gray-300 hover:bg-gray-100 px-4 py-2 rounded-lg transition-colors"
+              >
+                Cerrar
+              </button>
+              <button 
+                onClick={async () => {
+                  await initCamera();     // ✅ Inicia la cámara
+                  setShowARView(true);    // ✅ Luego muestra la vista AR
+                }}
+                disabled={!modelPreloaded || loading}
+                className="bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg transition-colors font-medium"
+              >
+                {loading ? 'Iniciando...' : '📱 Abrir AR'}
+              </button>
+
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
