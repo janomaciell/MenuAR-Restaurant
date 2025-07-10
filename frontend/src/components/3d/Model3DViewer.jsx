@@ -81,24 +81,38 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   }, [startTracking]);
 
   // Detectar superficie continuamente
+// Detectar superficie continuamente
   useEffect(() => {
     if (!arActive || !videoRef.current || !detectionCanvasRef.current) return;
 
     const detectSurface = () => {
+      const video = videoRef.current;
+
+      // Asegurarse de que el video esté listo antes de intentar analizarlo
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        console.warn('⏳ Esperando a que el video esté listo...');
+        return;
+      }
+
       const detection = surfaceDetectorRef.current.detectSurface(
-        videoRef.current,
+        video,
         detectionCanvasRef.current
       );
-      
+
       if (detection && detection.confidence > 0.7) {
         console.log('🎯 Mesa detectada:', detection);
-        // La mesa está detectada y lista para colocar el plato
+        trackingState.update(detection);
+      } else {
+        console.warn('🔍 No se detectó una superficie válida aún.')
+        trackingState.reset() ;
+        // ... (opcional: actualizar estado, etc.)
       }
     };
 
     const interval = setInterval(detectSurface, 500);
     return () => clearInterval(interval);
   }, [arActive]);
+
 
   // Componente del modelo AR mejorado
   const ARModelComponent = () => {
