@@ -53,6 +53,7 @@ export class SurfaceDetector {
     let colorVariance = 0;
 
     // Analizar la imagen en bloques para detectar superficies planas
+    for (let y = 0; y < height; y += 4) {
       for (let x = 0; x < width; x += 4) {
         const index = (y * width + x) * 4;
         const r = data[index];
