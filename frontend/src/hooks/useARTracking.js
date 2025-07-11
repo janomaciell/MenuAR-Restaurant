@@ -13,6 +13,26 @@ export const useARTracking = () => {
   const stabilityBuffer = useRef([]);
   const maxBufferSize = 10;
 
+  // Métodos para actualizar y resetear el estado
+  const update = useCallback((detection) => {
+    setTrackingState(prev => ({
+      ...prev,
+      confidence: detection.confidence,
+      surfacePosition: detection.position,
+      surfaceDimensions: detection.dimensions,
+      lastUpdate: Date.now()
+    }));
+  }, []);
+
+  const reset = useCallback(() => {
+    setTrackingState(prev => ({
+      ...prev,
+      confidence: 0,
+      surfacePosition: [0, 0, -1],
+      surfaceDimensions: { width: 0, height: 0 }
+    }));
+  }, []);
+
   const startTracking = useCallback((videoElement) => {
     if (!videoElement) return;
 
@@ -69,7 +89,11 @@ export const useARTracking = () => {
   }, []);
 
   return {
-    trackingState,
+    trackingState: {
+      ...trackingState,
+      update,
+      reset
+    },
     startTracking,
     stopTracking
   };

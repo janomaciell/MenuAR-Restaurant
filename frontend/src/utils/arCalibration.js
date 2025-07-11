@@ -44,34 +44,78 @@ export class SurfaceDetector {
 
   analyzeSurface(imageData) {
     const data = imageData.data;
+    const width = imageData.width;
+    const height = imageData.height;
+    
     let horizontalLines = 0;
     let surfaceArea = 0;
+    let edgePixels = 0;
+    let colorVariance = 0;
 
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      const brightness = (r + g + b) / 3;
+    // Analizar la imagen en bloques para detectar superficies planas
+      for (let x = 0; x < width; x += 4) {
+        const index = (y * width + x) * 4;
+        const r = data[index];
+        const g = data[index + 1];
+        const b = data[index + 2];
+        
+        // Detectar bordes horizontales (mesas)
+        if (y > 0 && y < height - 1) {
+          const prevIndex = ((y - 1) * width + x) * 4;
+          const nextIndex = ((y + 1) * width + x) * 4;
+          
+          const brightness = (r + g + b) / 3;
+          const prevBrightness = (data[prevIndex] + data[prevIndex + 1] + data[prevIndex + 2]) / 3;
+          const nextBrightness = (data[nextIndex] + data[nextIndex + 1] + data[nextIndex + 2]) / 3;
+          
+          if (Math.abs(brightness - prevBrightness) > 30 || Math.abs(brightness - nextBrightness) > 30) {
+            horizontalLines++;
+          }
+        }
 
-      if (brightness > 100 && brightness < 200) {
-        horizontalLines++;
-      }
+        // Detectar superficies planas (colores similares)
+        if (Math.abs(r - g) < 25 && Math.abs(g - b) < 25 && Math.abs(r - b) < 25) {
+          surfaceArea++;
+        }
 
-      if (Math.abs(r - g) < 20 && Math.abs(g - b) < 20) {
-        surfaceArea++;
+        // Detectar bordes
+        if (x > 0 && x < width - 1) {
+          const leftIndex = (y * width + (x - 1)) * 4;
+          const rightIndex = (y * width + (x + 1)) * 4;
+          
+          const brightness = (r + g + b) / 3;
+          const leftBrightness = (data[leftIndex] + data[leftIndex + 1] + data[leftIndex + 2]) / 3;
+          const rightBrightness = (data[rightIndex] + data[rightIndex + 1] + data[rightIndex + 2]) / 3;
+          
+          if (Math.abs(brightness - leftBrightness) > 40 || Math.abs(brightness - rightBrightness) > 40) {
+            edgePixels++;
+          }
+        }
+
+        // Calcular varianza de color
+        colorVariance += Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b);
       }
     }
 
-    const totalPixels = data.length / 4;
+    const totalPixels = (width * height) / 16; // Debido al muestreo cada 4 píxeles
     const surfaceRatio = surfaceArea / totalPixels;
-    const edgeRatio = horizontalLines / totalPixels;
+    const edgeRatio = edgePixels / totalPixels;
+    const lineRatio = horizontalLines / totalPixels;
+    const avgColorVariance = colorVariance / totalPixels;
 
-    const confidence = Math.min(1, (surfaceRatio * 2 + edgeRatio * 3));
+    // Algoritmo mejorado para detectar mesas
+    const tableConfidence = Math.min(1, 
+      (surfaceRatio * 0.4) + 
+      (edgeRatio * 0.3) + 
+      (lineRatio * 0.3) + 
+      (avgColorVariance < 50 ? 0.2 : 0)
+    );
 
     return {
-      confidence,
+      confidence: tableConfidence,
       surfaceRatio,
       edgeRatio,
+      lineRatio,
       estimatedPosition: this.estimatePosition(surfaceRatio, edgeRatio),
       estimatedDimensions: this.estimateDimensions(surfaceRatio)
     };
