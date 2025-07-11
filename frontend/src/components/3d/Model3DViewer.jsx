@@ -364,6 +364,27 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     }
   };
 
+  // --- NUEVO: Handler para colocar el plato manualmente ---
+  const handleManualPlacement = (e) => {
+    if (modelPlaced) return;
+    // Solo permitir si la cámara está activa y el modelo no está colocado
+    const overlay = e.currentTarget;
+    const rect = overlay.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width; // 0 a 1
+    const y = (e.clientY - rect.top) / rect.height; // 0 a 1
+    // Traduce a coordenadas 3D (ajusta según tu escena)
+    const posX = (x - 0.5) * 1.2; // -0.6 a 0.6 metros
+    const posZ = -1.2; // Distancia fija
+    const posY = -0.5 + (0.5 - y) * 0.2; // Altura ajustable
+    trackingState.update({
+      confidence: 1,
+      position: [posX, posY, posZ],
+      dimensions: { width: 1.2, height: 0.8 }
+    });
+    setModelPlaced(true);
+    console.log('🍽️ Plato colocado manualmente en:', [posX, posY, posZ]);
+  };
+
   useEffect(() => {
     if (showARView && videoRef.current) {
       // Aquí llamas a la función que inicializa la cámara y el stream
@@ -377,6 +398,20 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   if (showARView) {
     return (
       <div className="fixed inset-0 z-50 bg-black">
+        {/* Overlay para tap-to-place */}
+        {!modelPlaced && !testMode && (
+          <div
+            className="absolute inset-0 w-full h-full z-30 cursor-crosshair"
+            style={{ background: 'rgba(0,0,0,0)', pointerEvents: 'auto' }}
+            onClick={handleManualPlacement}
+          >
+            <div className="absolute bottom-24 left-0 right-0 flex justify-center">
+              <div className="bg-black/80 text-white px-4 py-2 rounded-lg text-lg font-semibold">
+                Toca la mesa para colocar el plato
+              </div>
+            </div>
+          </div>
+        )}
         {/* Video de la cámara (solo en modo normal) */}
         {!testMode && (
           <video
