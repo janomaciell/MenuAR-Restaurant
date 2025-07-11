@@ -57,7 +57,6 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
 
       console.log('🚀 Iniciando AR con detección de mesa...');
 
-      // Intentar diferentes configuraciones de cámara
       const cameraConfigs = getFallbackCameraConfigs();
 
       let stream = null;
@@ -176,7 +175,6 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     } catch (e) {
       console.error('❌ Error iniciando AR:', e);
       
-      // Limpiar recursos en caso de error
       if (cameraStream) {
         cameraStream.getTracks().forEach(track => track.stop());
         setCameraStream(null);
