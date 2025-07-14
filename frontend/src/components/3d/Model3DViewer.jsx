@@ -5,21 +5,17 @@ import * as THREE from 'three';
 
 // Importar tus utilidades
 import { useARTracking, useDeviceStability } from "../../hooks/useARTracking";
-// ✅ De arCalibration.js
 import { 
   SurfaceDetector, 
   calculateOptimalScale, 
   MotionCompensator 
 } from '../../utils/arCalibration';
-
-// ✅ De arUtils.js
 import { 
   checkARSupport, 
   getCameraConstraints,
   diagnoseCameraIssues,
   getFallbackCameraConfigs
 } from '../../utils/arUtils';
-
 
 function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [arActive, setArActive] = useState(false);
@@ -29,9 +25,13 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   const [cameraStream, setCameraStream] = useState(null);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [modelPlaced, setModelPlaced] = useState(false);
-  const [testMode, setTestMode] = useState(false); // Modo de prueba
+  const [testMode, setTestMode] = useState(false);
   
-  // Usar tus hooks personalizados
+  // NUEVOS ESTADOS para posición fija
+  const [fixedPosition, setFixedPosition] = useState([0, 0, 0]);
+  const [fixedScale, setFixedScale] = useState(1);
+  const [modelOrientation, setModelOrientation] = useState(0); // Rotación Y inicial
+  
   const { trackingState, startTracking, stopTracking } = useARTracking();
   const deviceStability = useDeviceStability();
   
@@ -49,7 +49,7 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     }
   }, []);
 
-  // Inicializar cámara optimizada
+  // Inicializar cámara optimizada (tu código existente)
   const initCamera = useCallback(async () => {
     try {
       setLoading(true);
@@ -58,11 +58,9 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
       console.log('🚀 Iniciando AR con detección de mesa...');
 
       const cameraConfigs = getFallbackCameraConfigs();
-
       let stream = null;
       let lastError = null;
 
-      // Probar cada configuración hasta que una funcione
       for (let i = 0; i < cameraConfigs.length; i++) {
         try {
           console.log(`📹 Intentando configuración de cámara ${i + 1}...`);
@@ -84,65 +82,30 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
 
       if (videoRef.current) {
         const video = videoRef.current;
-        console.log('videoRef.current existe:', !!video);
         video.srcObject = stream;
         video.muted = true;
         video.playsInline = true;
         video.autoplay = true;
-        video.style.display = 'block'; // Asegúrate de que sea visible
-        video.style.background = 'red'; // Para depuración visual
+        video.style.display = 'block';
         video.width = 640;
         video.height = 480;
         
-        // Log de tracks
-        if (stream.getVideoTracks().length === 0) {
-          console.error('❌ El stream NO tiene tracks de video');
-        } else {
-          console.log('✅ El stream tiene tracks de video:', stream.getVideoTracks());
-        }
-        
-        video.onloadeddata = () => {
-          console.log('video.onloadeddata fired:', video.videoWidth, video.videoHeight);
-        };
-        video.onloadedmetadata = () => {
-          console.log('video.onloadedmetadata fired:', video.videoWidth, video.videoHeight);
-        };
-        video.onplay = () => {
-          console.log('video.onplay fired:', video.videoWidth, video.videoHeight);
-        };
-        video.onerror = (e) => {
-          console.error('❌ video.onerror', e);
-        };
-        
-        // Verificar si el video está en el DOM
-        setTimeout(() => {
-          if (!document.body.contains(video)) {
-            console.error('❌ El video NO está en el DOM');
-          } else {
-            console.log('✅ El video está en el DOM');
-          }
-        }, 1000);
-
-        // Esperar a que el video esté completamente listo
         await new Promise((resolve, reject) => {
           let attempts = 0;
-          const maxAttempts = 50; // 5 segundos máximo
+          const maxAttempts = 50;
           
           const checkVideoReady = () => {
             attempts++;
-            console.log('checkVideoReady:', video.videoWidth, video.videoHeight, 'attempt', attempts);
             if (video.videoWidth > 0 && video.videoHeight > 0) {
               console.log('✅ Video listo:', video.videoWidth, 'x', video.videoHeight);
               resolve();
             } else if (attempts >= maxAttempts) {
               reject(new Error('Timeout: El video no obtuvo dimensiones válidas'));
             } else {
-              console.log(`⏳ Esperando dimensiones del video... (${attempts}/${maxAttempts})`);
               setTimeout(checkVideoReady, 100);
             }
           };
 
-          // Intentar reproducir el video
           video.play()
             .then(() => {
               console.log('video.play() resolved');
@@ -152,19 +115,9 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
               console.warn('⚠️ Error al reproducir video, intentando continuar...', playError);
               checkVideoReady();
             });
-
-          // Timeout de seguridad
-          setTimeout(() => {
-            if (video.videoWidth === 0) {
-              console.error('❌ Timeout esperando video');
-              reject(new Error('Timeout esperando video'));
-            }
-          }, 5000);
         });
 
         startTracking(video);
-      } else {
-        console.error('❌ videoRef.current es null');
       }
 
       setArActive(true);
@@ -180,7 +133,6 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
         setCameraStream(null);
       }
       
-      // Mensaje de error más específico
       let errorMessage = 'No se pudo acceder a la cámara. ';
       if (e.name === 'NotAllowedError') {
         errorMessage += 'Permisos de cámara denegados.';
@@ -197,18 +149,17 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     }
   }, [startTracking]);
 
-  // Detectar superficie continuamente
+  // Detectar superficie continuamente (tu código existente)
   useEffect(() => {
     if (!arActive || !videoRef.current || !detectionCanvasRef.current) return;
 
     let detectionAttempts = 0;
-    const maxAttempts = 30; // Máximo 15 segundos de intentos
+    const maxAttempts = 30;
     let detectionInterval = null;
 
     const detectSurface = () => {
       const video = videoRef.current;
 
-      // Verificar que el video esté listo
       if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
         detectionAttempts++;
         if (detectionAttempts < maxAttempts) {
@@ -242,11 +193,9 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
         }
       } catch (error) {
         console.error('❌ Error en detección de superficie:', error);
-        // No incrementar attempts en caso de error de detección
       }
     };
 
-    // Iniciar detección después de un pequeño delay para asegurar que todo esté listo
     const initialDelay = setTimeout(() => {
       detectSurface();
       detectionInterval = setInterval(detectSurface, 500);
@@ -260,51 +209,93 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     };
   }, [arActive, trackingState]);
 
-
-  // Componente del modelo AR mejorado
+  // ✅ COMPONENTE DEL MODELO AR CORREGIDO
   const ARModelComponent = () => {
     const { scene } = useGLTF(modelPath);
     const modelRef = useRef();
     const { camera } = useThree();
+    const [initialRotation, setInitialRotation] = useState(0);
 
+    // Configurar el modelo una sola vez cuando se carga
+    useEffect(() => {
+      if (modelRef.current && scene) {
+        // Calcular el bounding box del modelo para centrarlo correctamente
+        const box = new THREE.Box3().setFromObject(scene);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        
+        // Centrar el modelo en su base (parte inferior)
+        scene.position.set(-center.x, -box.min.y, -center.z);
+        
+        // Escala realista para platos (generalmente 20-30cm de diámetro)
+        const maxDimension = Math.max(size.x, size.y, size.z);
+        const targetSize = 0.25; // 25cm en la escena
+        const scale = targetSize / maxDimension;
+        
+        setFixedScale(scale);
+        setInitialRotation(modelOrientation);
+        
+        console.log('🍽️ Modelo configurado:', {
+          originalSize: size,
+          scale: scale,
+          targetSize: targetSize + 'm'
+        });
+      }
+    }, [scene, modelOrientation]);
+
+    // ✅ USAR useFrame SOLO PARA ANIMACIÓN, NO PARA POSICIONAMIENTO
     useFrame((state) => {
-      if (modelRef.current && modelPlaced && trackingState.confidence > 0.8) {
-        // Usar compensación de movimiento
-        const compensatedPosition = motionCompensatorRef.current.compensateMotion(
-          { alpha: 0, beta: 0, gamma: 0 }, // Orientación actual (simplificada)
-          trackingState.surfacePosition
-        );
-
-        // Aplicar posición compensada
-        modelRef.current.position.set(...compensatedPosition);
+      if (modelRef.current && modelPlaced) {
+        // Solo rotar suavemente, NO cambiar posición
+        modelRef.current.rotation.y = initialRotation + state.clock.elapsedTime * 0.3;
         
-        // Escala automática basada en la mesa detectada
-        const optimalScale = calculateOptimalScale(
-          trackingState.surfaceDimensions,
-          { width: 1, height: 1 },
-          Math.abs(compensatedPosition[2])
-        );
-        
-        modelRef.current.scale.set(optimalScale, optimalScale, optimalScale);
-        
-        // Rotación suave
-        modelRef.current.rotation.y += 0.005;
+        // Mantener posición fija
+        modelRef.current.position.set(...fixedPosition);
+        modelRef.current.scale.set(fixedScale, fixedScale, fixedScale);
       }
     });
 
-    // Colocar plato al tocar la pantalla
-    const handlePlacement = (event) => {
-      if (trackingState.confidence > 0.8) {
-        setModelPlaced(true);
-        console.log('🍽️ Plato colocado en la mesa');
-      }
-    };
-
     return (
-      <group ref={modelRef} onClick={handlePlacement}>
+      <group ref={modelRef}>
         <primitive object={scene.clone()} />
       </group>
     );
+  };
+
+  // ✅ HANDLER PARA COLOCAR EL PLATO CORREGIDO
+  const handleManualPlacement = (e) => {
+    if (modelPlaced) return;
+    
+    const overlay = e.currentTarget;
+    const rect = overlay.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    
+    // Convertir coordenadas de pantalla a 3D
+    const posX = (x - 0.5) * 1.0; // Rango más pequeño para realismo
+    const posY = 0; // Altura de la mesa (0 = superficie)
+    const posZ = -0.8 - (y * 0.3); // Profundidad basada en Y de pantalla
+    
+    // ✅ FIJAR POSICIÓN UNA SOLA VEZ
+    setFixedPosition([posX, posY, posZ]);
+    setModelPlaced(true);
+    
+    // Actualizar tracking state para la UI
+    trackingState.update({
+      confidence: 1,
+      position: [posX, posY, posZ],
+      dimensions: { width: 1.2, height: 0.8 }
+    });
+    
+    console.log('🍽️ Plato colocado en posición fija:', [posX, posY, posZ]);
+  };
+
+  // ✅ FUNCIÓN PARA REPOSICIONAR
+  const handleReposition = () => {
+    setModelPlaced(false);
+    setFixedPosition([0, 0, 0]);
+    setModelOrientation(Math.random() * Math.PI * 2); // Rotación aleatoria
+    console.log('🔄 Modelo listo para reposicionar');
   };
 
   // Cerrar AR
@@ -318,6 +309,9 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     setArActive(false);
     setModelPlaced(false);
     setTestMode(false);
+    setFixedPosition([0, 0, 0]);
+    setFixedScale(1);
+    setModelOrientation(0);
     surfaceDetectorRef.current.reset();
     motionCompensatorRef.current.reset();
   };
@@ -328,11 +322,10 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     setShowARView(true);
     setArActive(true);
     
-    // Simular detección de mesa después de 2 segundos
     setTimeout(() => {
       const mockDetection = {
         confidence: 0.95,
-        position: [0, -0.3, -1.5],
+        position: [0, 0, -0.8],
         dimensions: { width: 1.5, height: 1.0 },
         isStable: true
       };
@@ -341,7 +334,7 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     }, 2000);
   };
 
-  // Función de diagnóstico
+  // Función de diagnóstico (sin cambios)
   const runDiagnostic = async () => {
     try {
       setLoading(true);
@@ -352,7 +345,6 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
       console.log('📋 Resultados del diagnóstico:');
       issues.forEach(issue => console.log(issue));
       
-      // Mostrar resultados en un alert temporal
       const diagnosticMessage = issues.join('\n');
       alert(`Diagnóstico de Cámara:\n\n${diagnosticMessage}`);
       
@@ -364,42 +356,20 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
     }
   };
 
-  // --- NUEVO: Handler para colocar el plato manualmente ---
-  const handleManualPlacement = (e) => {
-    if (modelPlaced) return;
-    // Solo permitir si la cámara está activa y el modelo no está colocado
-    const overlay = e.currentTarget;
-    const rect = overlay.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width; // 0 a 1
-    const y = (e.clientY - rect.top) / rect.height; // 0 a 1
-    // Traduce a coordenadas 3D (ajusta según tu escena)
-    const posX = (x - 0.5) * 1.2; // -0.6 a 0.6 metros
-    const posZ = -1.2; // Distancia fija
-    const posY = -0.5 + (0.5 - y) * 0.2; // Altura ajustable
-    trackingState.update({
-      confidence: 1,
-      position: [posX, posY, posZ],
-      dimensions: { width: 1.2, height: 0.8 }
-    });
-    setModelPlaced(true);
-    console.log('🍽️ Plato colocado manualmente en:', [posX, posY, posZ]);
-  };
-
   useEffect(() => {
     if (showARView && videoRef.current) {
-      // Aquí llamas a la función que inicializa la cámara y el stream
       initCamera();
     }
   }, [showARView, videoRef]);
 
   if (!isOpen) return null;
 
-  // Vista AR con detección de mesa
+  // Vista AR
   if (showARView) {
     return (
       <div className="fixed inset-0 z-50 bg-black">
         {/* Overlay para tap-to-place */}
-        {!modelPlaced && !testMode && (
+        {!modelPlaced && (
           <div
             className="absolute inset-0 w-full h-full z-30 cursor-crosshair"
             style={{ background: 'rgba(0,0,0,0)', pointerEvents: 'auto' }}
@@ -407,12 +377,13 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
           >
             <div className="absolute bottom-24 left-0 right-0 flex justify-center">
               <div className="bg-black/80 text-white px-4 py-2 rounded-lg text-lg font-semibold">
-                Toca la mesa para colocar el plato
+                Toca donde quieres colocar el plato
               </div>
             </div>
           </div>
         )}
-        {/* Video de la cámara (solo en modo normal) */}
+
+        {/* Video de la cámara */}
         {!testMode && (
           <video
             ref={videoRef}
@@ -423,52 +394,48 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
           />
         )}
 
-        {/* Fondo de prueba (solo en modo de prueba) */}
+        {/* Fondo de prueba */}
         {testMode && (
           <div className="absolute inset-0 w-full h-full bg-gradient-to-b from-blue-900 to-blue-700 flex items-center justify-center">
             <div className="text-white text-center">
               <h2 className="text-2xl font-bold mb-4">🧪 Modo de Prueba AR</h2>
-              <p className="text-lg">Simulando detección de mesa...</p>
+              <p className="text-lg">Simulando mesa de restaurante...</p>
             </div>
           </div>
         )}
 
         {/* Canvas oculto para detección */}
-        <canvas
-          ref={detectionCanvasRef}
-          className="hidden"
-        />
+        <canvas ref={detectionCanvasRef} className="hidden" />
 
         {/* Canvas 3D superpuesto */}
         <div className="absolute inset-0 w-full h-full">
           <Canvas
             ref={canvasRef}
             style={{ width: '100%', height: '100%', background: 'transparent' }}
-            camera={{ position: [0, 0, 2], fov: 75 }}
+            camera={{ position: [0, 0, 2], fov: 60 }} // FOV más realista
             gl={{ alpha: true, preserveDrawingBuffer: true }}
           >
-            <ambientLight intensity={0.6} />
-            <directionalLight position={[2, 2, 2]} intensity={0.8} />
+            {/* Iluminación mejorada para platos */}
+            <ambientLight intensity={0.4} />
+            <directionalLight position={[2, 5, 2]} intensity={0.8} />
+            <directionalLight position={[-2, 1, -2]} intensity={0.3} />
             
-            {/* Mostrar plato solo si hay confianza en la detección */}
-            {trackingState.confidence > 0.5 && (
+            {/* Mostrar plato cuando esté colocado */}
+            {modelPlaced && (
               <ARModelComponent />
             )}
 
-            {/* Plano de la mesa (opcional, para visualización) */}
-            {trackingState.confidence > 0.8 && (
+            {/* Plano de referencia de la mesa (opcional) */}
+            {trackingState.confidence > 0.8 && !modelPlaced && (
               <mesh
-                position={trackingState.surfacePosition}
+                position={[0, -0.01, -0.8]}
                 rotation={[-Math.PI / 2, 0, 0]}
               >
-                <planeGeometry args={[
-                  trackingState.surfaceDimensions.width,
-                  trackingState.surfaceDimensions.height
-                ]} />
+                <planeGeometry args={[1.2, 0.8]} />
                 <meshBasicMaterial 
                   color="#ffffff" 
                   transparent 
-                  opacity={0.1}
+                  opacity={0.2}
                   side={THREE.DoubleSide}
                 />
               </mesh>
@@ -488,78 +455,63 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
             
             <div className="bg-black/70 text-white px-3 py-1 rounded-lg text-sm">
               {testMode ? '🧪 Modo Prueba' : 
+               modelPlaced ? '✅ Plato colocado' :
                trackingState.confidence > 0.8 ? '🎯 Mesa detectada' : '🔍 Buscando mesa...'}
             </div>
           </div>
         </div>
 
-        {/* Instrucciones dinámicas */}
-        <div className="absolute bottom-4 left-4 right-4 z-10">
-          <div className="bg-black/80 text-white p-4 rounded-lg">
-            {testMode ? (
-              <div>
-                <h3 className="font-semibold mb-2">🧪 Modo de Prueba Activo</h3>
-                <p className="text-sm">Simulando detección de mesa para pruebas</p>
-                {trackingState.confidence > 0.8 && (
-                  <p className="text-green-400 text-sm mt-1">✅ Mesa simulada detectada</p>
-                )}
+        {/* Controles cuando el modelo está colocado */}
+        {modelPlaced && (
+          <div className="absolute bottom-4 left-4 right-4 z-10">
+            <div className="bg-black/80 text-white p-4 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-lg">🍽️ {itemName}</h3>
+                  <p className="text-sm opacity-80">Tamaño real aproximado</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleReposition}
+                    className="bg-blue-500 hover:bg-blue-600 px-3 py-2 rounded text-sm"
+                  >
+                    📍 Reposicionar
+                  </button>
+                </div>
               </div>
-            ) : (
-              <>
-                {trackingState.confidence < 0.3 && (
-                  <div>
-                    <h3 className="font-semibold mb-2">📱 Escanea tu mesa</h3>
-                    <p className="text-sm">Apunta la cámara hacia la mesa del restaurante</p>
-                    <div className="mt-2 bg-gray-600 rounded-full h-2">
-                      <div 
-                        className="bg-blue-500 h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${trackingState.confidence * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-                
-                {trackingState.confidence >= 0.3 && trackingState.confidence < 0.8 && (
-                  <div>
-                    <h3 className="font-semibold mb-2">🎯 Detectando superficie...</h3>
-                    <p className="text-sm">Mantén la cámara estable</p>
-                    <div className="mt-2 bg-gray-600 rounded-full h-2">
-                      <div 
-                        className="bg-orange-500 h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${trackingState.confidence * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-                
-                {trackingState.confidence >= 0.8 && !modelPlaced && (
-                  <div>
-                    <h3 className="font-semibold mb-2">✅ ¡Mesa encontrada!</h3>
-                    <p className="text-sm">Toca la pantalla para colocar tu plato</p>
-                    {!deviceStability.isStable && (
-                      <p className="text-xs text-yellow-400 mt-1">
-                        💡 Mantén el teléfono más estable para mejor experiencia
-                      </p>
-                    )}
-                  </div>
-                )}
-                
-                {modelPlaced && (
-                  <div>
-                    <h3 className="font-semibold mb-2">🍽️ {itemName} en tu mesa</h3>
-                    <p className="text-sm">Mueve el teléfono para verlo desde diferentes ángulos</p>
-                    <button
-                      onClick={() => setModelPlaced(false)}
-                      className="mt-2 bg-blue-500 hover:bg-blue-600 px-3 py-1 rounded text-sm"
-                    >
-                      Reposicionar
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Instrucciones iniciales */}
+        {!modelPlaced && (
+          <div className="absolute bottom-4 left-4 right-4 z-10">
+            <div className="bg-black/80 text-white p-4 rounded-lg">
+              {testMode ? (
+                <div>
+                  <h3 className="font-semibold mb-2">🧪 Modo de Prueba</h3>
+                  <p className="text-sm">Toca la pantalla para colocar el plato</p>
+                </div>
+              ) : (
+                <>
+                  {trackingState.confidence < 0.8 && (
+                    <div>
+                      <h3 className="font-semibold mb-2">📱 Busca tu mesa</h3>
+                      <p className="text-sm">Apunta la cámara hacia la mesa</p>
+                    </div>
+                  )}
+                  
+                  {trackingState.confidence >= 0.8 && (
+                    <div>
+                      <h3 className="font-semibold mb-2">✅ Mesa encontrada</h3>
+                      <p className="text-sm">Toca donde quieres ver el plato</p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -567,9 +519,7 @@ function Model3DViewer({ modelPath, isOpen, onClose, itemName }) {
   // Vista normal (sin cambios)
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      {/* Tu interfaz normal existente */}
       <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-        {/* Contenido normal del modal */}
         <div className="p-6">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-2xl font-bold">Vista 3D: {itemName}</h3>

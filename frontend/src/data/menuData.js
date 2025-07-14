@@ -67,7 +67,7 @@ export const menuItems = {
       description: 'Refrescante té helado con un toque de limón',
       price: 3.50,
       image: '/api/placeholder/300/200',
-      model3d: null, // No hay modelo 3D para bebidas
+      model3d: null, 
       allergens: ['Sin gluten'],
       category: 'bebidas'
     },
@@ -124,6 +124,7 @@ export const menuItems = {
       allergens: ['Gluten', 'Lácteos'],
       category: 'hamburguesas'
     },
+
     {
       id: 'burger-simple',
       name: 'Burger Clásica',
